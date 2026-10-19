@@ -34,6 +34,25 @@ localStorage["dsh.conversation.contentWidth"]   // 单位 px，由拖拽手柄�
 
 因为超过约 1100–1300px 之后，一行散文就不再舒适可读了——眼睛会跟丢行尾，所以真正有用的区间其实远在 1600 之内。留到 1600 是为了照顾特别宽的显示器、以及偏好宽栏位的用户；而布局自己的 `columnWidth - 176` clamp 始终是任意给定窗口下的硬上限。
 
+## 兼容性
+
+已在 **DSH 0.2.1-rc.2** 的宿主上实测通过，同时也兼容 0.2.0-rc.2。
+
+插件依赖的宿主契约共六项，逐项都对着宿主源码核过：
+
+| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.2 |
+| --- | --- | --- | --- |
+| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ |
+| 设置项插槽 `settings.general.item` | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ |
+| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ |
+| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ |
+| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ |
+| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ |
+
+**0.2.1-rc.2 的变化不影响本插件**：`@deepseek-ai/dsh-client-ui-slots` 与 `@deepseek-ai/dsh-client-store` 不再作为独立包发布，但仍是 platform seed 词（由前端 vendor bundle 提供）。插件从来没有 `require` 过它们，只通过 cordis 服务注入 `slots` / `locale`，所以代码零改动即可运行；`peerDependencies` 里对应的声明已移除，避免指向一个不存在的包。
+
+`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2 和 0.2.1-rc.2 的 seed 表里都在。0.2.1-rc.2 的 seed 表还新增了 `zod` 与 `@tanstack/react-virtual`，对本插件无影响。
+
 ## 安装
 
 把本包链接进某个 DSH profile，并加入该 profile 的 bundle 列表。
@@ -104,7 +123,9 @@ $env:ELECTRON_RUN_AS_NODE = "1"
 | `_dcw_probe_width.cjs` | 是哪个 CSS 变量和 clamp 掌管着栏位宽度，以及谁写入它。 |
 | `_dcw_probe_slot.cjs` | `settings.general.item` 这个插槽是否存在，各行的落位顺序如何。 |
 | `_dcw_probe_pnpm.cjs` | profile 如何解析链接进来的本地包。 |
+| `_dcw_livegraph.cjs` | 按宿主 `resolveMeta` 的同一套判定，验证插件在真实 profile 里能否被组装进客户端模块图。 |
 | `_dcw_yaml_check.cjs` | 内置的 YAML 解析器能否接受 `cordis.patch.yml`。 |
+| `_dcw_check_peers.cjs` | 插件声明的每个 peer 与每个 `require()` 在当前宿主上是否都成立——用来抓宿主升级导致的契约漂移。 |
 | `_dcw_test_client.cjs` | 用一个极简 DOM 和被 shim 的 `react`，跑真正的 bundle 工厂函数，然后检查返回的树。 |
 | `_dcw_test_host.mjs` | 按宿主 loader 的方式导入 Node 侧，证明它不会破坏启动。 |
 | `_dcw_verify_state.mjs` | 断言安装状态：bundle 已注册、junction 有效、无重复解析。 |
