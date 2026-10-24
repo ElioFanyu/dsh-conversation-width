@@ -55,12 +55,34 @@ const windowShim = {
   addEventListener: () => {},
   removeEventListener: () => {}
 };
+
+// A stand-in for one mounted Conversation body. ui-conversation renders it as
+// `[data-conversation-content]` and publishes `--dsh-chat-user-width` on its
+// PARENT, which is the element carrying the width axis. The plugin must write
+// that same variable on that same element, so the shim models both.
+function makeConversationBody(offsetWidth) {
+  const parentProps = new Map();
+  const parent = {
+    style: {
+      setProperty: (name, value) => parentProps.set(name, String(value)),
+      removeProperty: name => { parentProps.delete(name); },
+      getPropertyValue: name => (parentProps.has(name) ? parentProps.get(name) : '')
+    }
+  };
+  const body = { offsetWidth, parentElement: parent, _props: parentProps };
+  return body;
+}
+let conversationBodies = [];
 // A real browser CSS engine throws SyntaxError on a malformed selector; the
 // shim must do the same or it cannot reproduce the defect this harness exists
 // to catch. Supported shapes: tag, tag[attr], tag[attr="v"], tag[attr='v'].
 const SEL_RE = /^([a-zA-Z][\w-]*)?(?:\[([\w-]+)(?:=("([^"]*)"|'([^']*)'))?\])?$/;
 const documentShim = {
-  querySelectorAll: sel => (sel === 'style[data-plugin-css]' ? styleTags : []),
+  querySelectorAll: sel => {
+    if (sel === 'style[data-plugin-css]') return styleTags;
+    if (sel === '[data-conversation-content]') return conversationBodies;
+    return [];
+  },
   querySelector: sel => {
     const m = SEL_RE.exec(sel);
     if (m === null) {
@@ -230,33 +252,51 @@ check('out-of-range stored 99999 is clamped only on write, not on read', () => {
   const { inputs } = inspect();
   return 'read value=' + inputs[0].props.value + ' (write path clamps to 1600)';
 });
-check('writePreference clamps and announces (via the range onChange)', () => {
+check('writePreference clamps and publishes (via the range onChange)', () => {
   store.clear();
-  let resizeSeen = 0;
-  windowShim.dispatchEvent = () => { resizeSeen++; return true; };
+  // A 1440px column => ui-conversation's ceiling is 1440 - 176 = 1264.
+  conversationBodies = [makeConversationBody(1440)];
   const { inputs } = inspect();
   const range = inputs.find(i => i.props.type === 'range');
   range.props.onChange({ currentTarget: { value: '99999' } });
   if (store.get('dsh.conversation.contentWidth') !== '1600') throw new Error('stored=' + store.get('dsh.conversation.contentWidth'));
+  if (conversationBodies[0]._props.get('--dsh-chat-user-width') !== '1264px') throw new Error('published=' + conversationBodies[0]._props.get('--dsh-chat-user-width') + ' (expected the column clamp 1264px)');
   const num = inputs.find(i => i.props.type === 'number');
   num.props.onChange({ currentTarget: { value: '10' } });
   if (store.get('dsh.conversation.contentWidth') !== '640') throw new Error('stored=' + store.get('dsh.conversation.contentWidth'));
+  if (conversationBodies[0]._props.get('--dsh-chat-user-width') !== '640px') throw new Error('published=' + conversationBodies[0]._props.get('--dsh-chat-user-width'));
   num.props.onChange({ currentTarget: { value: '' } });
   if (store.get('dsh.conversation.contentWidth') !== '640') throw new Error('empty draft must not commit, stored=' + store.get('dsh.conversation.contentWidth'));
-  if (resizeSeen !== 2) throw new Error('resize events=' + resizeSeen);
-  return 'clamped to 1600 then 640, empty draft ignored, ' + resizeSeen + ' resize announces';
+  return 'stored 1600 clamped to the 1264px column ceiling, then 640px; empty draft ignored';
 });
-check('reset clears the preference and announces', () => {
+check('a preference that fits is published verbatim', () => {
+  store.clear();
+  conversationBodies = [makeConversationBody(2000)];
+  const { inputs } = inspect();
+  inputs.find(i => i.props.type === 'range').props.onChange({ currentTarget: { value: '1280' } });
+  if (conversationBodies[0]._props.get('--dsh-chat-user-width') !== '1280px') throw new Error('published=' + conversationBodies[0]._props.get('--dsh-chat-user-width'));
+  return '1280px into a 2000px column (ceiling 1824)';
+});
+check('an unmeasured column is skipped rather than publishing 0px', () => {
+  store.clear();
+  conversationBodies = [makeConversationBody(0)];
+  const { inputs } = inspect();
+  inputs.find(i => i.props.type === 'range').props.onChange({ currentTarget: { value: '1100' } });
+  if (conversationBodies[0]._props.has('--dsh-chat-user-width')) throw new Error('wrote ' + conversationBodies[0]._props.get('--dsh-chat-user-width') + ' into a zero-width column');
+  return 'no write while offsetWidth is 0';
+});
+check('reset clears the preference and removes the published variable', () => {
   store.set('dsh.conversation.contentWidth', '1100');
-  let resizeSeen = 0;
-  windowShim.dispatchEvent = () => { resizeSeen++; return true; };
+  conversationBodies = [makeConversationBody(1600)];
   const { buttons } = inspect();
+  // Seed the variable so the removal is observable.
+  conversationBodies[0]._props.set('--dsh-chat-user-width', '1100px');
   const resetButton = buttons.find(b => b.props.className === 'dcw_reset');
   if (!resetButton) throw new Error('no reset button');
   resetButton.props.onClick();
   if (store.has('dsh.conversation.contentWidth')) throw new Error('preference not cleared');
-  if (resizeSeen !== 1) throw new Error('resize events=' + resizeSeen);
-  return 'cleared, 1 resize announce';
+  if (conversationBodies[0]._props.has('--dsh-chat-user-width')) throw new Error('variable still published');
+  return 'cleared, --dsh-chat-user-width removed';
 });
 
 console.log('\n' + (failures.length === 0 ? 'RESULT: ALL CHECKS PASSED' : 'RESULT: ' + failures.length + ' FAILURE(S)\n  - ' + failures.join('\n  - ')));

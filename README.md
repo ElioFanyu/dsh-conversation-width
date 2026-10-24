@@ -36,11 +36,11 @@ localStorage["dsh.conversation.contentWidth"]   // 单位 px，由拖拽手柄�
 
 ## 兼容性
 
-已在 **DSH 0.2.1-rc.2** 的宿主上实测通过，同时也兼容 0.2.0-rc.2。
+已在 **DSH 0.2.1-rc.3** 的宿主上实测通过，同时兼容 0.2.0-rc.2 与 0.2.1-rc.2。
 
-插件依赖的宿主契约共六项，逐项都对着宿主源码核过：
+插件依赖的宿主契约共七项，逐项都对着宿主源码核过：
 
-| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.2 |
+| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 |
 | --- | --- | --- | --- |
 | 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ |
 | 设置项插槽 `settings.general.item` | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ |
@@ -48,10 +48,19 @@ localStorage["dsh.conversation.contentWidth"]   // 单位 px，由拖拽手柄�
 | `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ |
 | 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ |
 | clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ |
+| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ |
 
-**0.2.1-rc.2 的变化不影响本插件**：`@deepseek-ai/dsh-client-ui-slots` 与 `@deepseek-ai/dsh-client-store` 不再作为独立包发布，但仍是 platform seed 词（由前端 vendor bundle 提供）。插件从来没有 `require` 过它们，只通过 cordis 服务注入 `slots` / `locale`，所以代码零改动即可运行；`peerDependencies` 里对应的声明已移除，避免指向一个不存在的包。
+`engines.dsh` 已声明为 `>=0.2.0-rc.2 <0.3.0`，宿主自己的 `evaluatePluginCompatibility()` 会读它（拿 `^0.3.0` 去试会得到 `REJECTED`，说明这个字段真的在生效）。
 
-`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2 和 0.2.1-rc.2 的 seed 表里都在。0.2.1-rc.2 的 seed 表还新增了 `zod` 与 `@tanstack/react-virtual`，对本插件无影响。
+**0.2.1 系列的变化不影响本插件**：`@deepseek-ai/dsh-client-ui-slots` 与 `@deepseek-ai/dsh-client-store` 不再作为独立包发布，但仍是 platform seed 词（由前端 vendor bundle 提供）。插件从来没有 `require` 过它们，只通过 cordis 服务注入 `slots` / `locale`，所以代码无需改动。
+
+`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2 和 0.2.1-rc.3 的 seed 表里都在。
+
+### 0.2.1-rc.3 上修掉的一个真缺陷
+
+旧版 `announce()` 靠 `window.dispatchEvent(new Event("resize"))` 通知 Conversation 重算宽度，**但 `dsh-client-ui-conversation` 里没有任何 `window` 级 `resize` 监听**——它只用 `ResizeObserver` 观察对话容器，而仅偏好变化时那个观察者不会触发。于是「在设置页改宽度」不会立即生效，要等下一次真实窗口缩放才被应用。
+
+现在改为直接把 `--dsh-chat-user-width` 写到 `[data-conversation-content]` 的父元素上（也就是 ui-conversation 自己 `publishWidths()` 写的同一个元素），并用它同一套 clamp `[640, columnWidth - 176]` 归一化，所以写入值与宿主下一次重算的结果完全一致。`tools/_dcw_test_client.cjs` 里的四个断言覆盖了这条路径，`tools/_dcw_make_buggy_announce.cjs` 能把旧实现重建出来，并证明这些断言真的会失败。
 
 ## 安装
 
@@ -131,6 +140,7 @@ $env:ELECTRON_RUN_AS_NODE = "1"
 | `_dcw_verify_state.mjs` | 断言安装状态：bundle 已注册、junction 有效、无重复解析。 |
 | `_dcw_apply_restore.mjs`、`_dcw_merge_patch.mjs` | 改写 `cordis.patch.yml`，以及从备份恢复而不丢失无关条目。 |
 | `_dcw_make_buggy.cjs` | 把最初那个坏掉的 CSS 注入块重建到 `.scratch/`，好让测试脚本被证明真的能抓到它本该抓的缺陷。 |
+| `_dcw_make_buggy_announce.cjs` | 把旧的 `resize` 版 `announce()` 重建到 `.scratch/`，证明新断言能抓到「改了宽度却不生效」。 |
 | `_dcw_show.cjs` | 按行号区间打印文件内容。 |
 
 最后一条值得强调：**一个永远只通过的测试不证明任何事**。`_dcw_make_buggy.cjs` 复现了真实的缺陷——用 `JSON.stringify` 拼接字符串构造选择器，产出 `style[data-plugin-css=""…""]`，导致 `querySelector` 在模块顶层抛 `SyntaxError: … is not a valid selector`——而 `_dcw_test_client.cjs` 在那个副本上失败、在真副本上通过。
@@ -139,4 +149,4 @@ $env:ELECTRON_RUN_AS_NODE = "1"
 
 - 该行注册进 `settings.general.item` 插槽，`order: 20`，位置在内置的开发者工具行之后、Current version 之前。
 - 文案放在插件自己的 `conversation-width` locale 命名空间里，遵循「每个注册者拥有自己那一行的文案」的约定。
-- 修改偏好时会派发一个 `window` 的 `resize` 事件。Conversation 是通过 `ResizeObserver` 发布 `--dsh-chat-user-width` 的，而这个观察者在仅偏好变化时不会触发；同源的 `storage` 事件又不会投递给写入方文档——所以这是布局已经监听的最省事的信号。
+- 修改偏好时直接写入 `--dsh-chat-user-width`。Conversation 是通过 `ResizeObserver` 发布这个变量的，而该观察者在仅偏好变化时不会触发；同源的 `storage` 事件又不会投递给写入方文档，且该包根本没有 `window` 级 `resize` 监听。所以唯一可靠的做法是插件自己按同一套 clamp 写一次这个变量。
