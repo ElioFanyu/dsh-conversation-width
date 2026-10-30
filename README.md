@@ -36,25 +36,31 @@ localStorage["dsh.conversation.contentWidth"]   // 单位 px，由拖拽手柄�
 
 ## 兼容性
 
-已在 **DSH 0.2.1-rc.3** 的宿主上实测通过，同时兼容 0.2.0-rc.2 与 0.2.1-rc.2。
+已在 **DSH 0.2.1-rc.5** 的宿主上实测通过，同时兼容 0.2.0-rc.2、0.2.1-rc.2、0.2.1-rc.3。
 
 插件依赖的宿主契约共七项，逐项都对着宿主源码核过：
 
-| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 |
-| --- | --- | --- | --- |
-| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ |
-| 设置项插槽 `settings.general.item` | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ |
-| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ |
-| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ |
-| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ |
-| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ |
-| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ |
+| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 | 0.2.1-rc.5 |
+| --- | --- | --- | --- | --- |
+| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ | ✓ |
+| 设置项插槽 `settings.general.item` | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ | ✓ |
+| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ | ✓ |
+| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ | ✓ |
+| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ | ✓ |
+| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ | ✓ |
+| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ | ✓ |
 
 `engines.dsh` 已声明为 `>=0.2.0-rc.2 <0.3.0`，宿主自己的 `evaluatePluginCompatibility()` 会读它（拿 `^0.3.0` 去试会得到 `REJECTED`，说明这个字段真的在生效）。
 
 **0.2.1 系列的变化不影响本插件**：`@deepseek-ai/dsh-client-ui-slots` 与 `@deepseek-ai/dsh-client-store` 不再作为独立包发布，但仍是 platform seed 词（由前端 vendor bundle 提供）。插件从来没有 `require` 过它们，只通过 cordis 服务注入 `slots` / `locale`，所以代码无需改动。
 
-`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2 和 0.2.1-rc.3 的 seed 表里都在。
+`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2、0.2.1-rc.3、0.2.1-rc.5 的 seed 表里都在（rc.5 仍是 React 18.3.1）。
+
+### 0.2.1-rc.5 上适配掉的两处偏差
+
+**行序撞车。** rc.5 的 `settings.general.item` 已被填入这些内置行：`permission -20`、`language 0`、`appearance 10`、`font-size 11`、`transcript-view 12`、`developer-tools 15`、`shortcuts 16`、`link-opening 17`、`composer-enter 20`、`performance-usage 30`、`session-log 90`、`current-version 100`。插件原先用的 `order: 20` 与 ui-conversation 的 `composer-enter` 完全同分；list 槽按 `priority` 再按 `order` 排序，两项都相等时回落到注册时序，于是本插件那一行的位置取决于哪个插件先 apply。改到 `18`：仍在内置偏好行之间（`link-opening` 之后、`composer-enter` 之前），且不再与任何内置行同分。`_dcw_test_client.cjs` 现在断言这个具体值，防止将来又改回去。
+
+**peer 版本范围。** `@deepseek-ai/dsh-client-locale` 原先声明 `^0.2.0-rc.2`，在 node-semver 默认规则下**不含任何 0.2.1-rc.x**（`0.2.1-rc.5` 的 `[major,minor,patch]` 是 `0.2.1`，而 `^0.2.0-rc.2` 升到 `<0.2.1-0`）。启动门禁不受影响——宿主在存在 `engines.dsh` 时会忽略 peer——但市场和 `dsh plugin` 会读这个字段，所以改成 `>=0.2.0-rc.2 <0.3.0`，与 `engines.dsh` 对齐。同时在 `dsh.compatibility.dshReleases` 里登记了 rc.5（该字段当前没有宿主消费者，属于给市场与未来工具用的声明）。
 
 ### 0.2.1-rc.3 上修掉的一个真缺陷
 
@@ -147,6 +153,6 @@ $env:ELECTRON_RUN_AS_NODE = "1"
 
 ## 备注
 
-- 该行注册进 `settings.general.item` 插槽，`order: 20`，位置在内置的开发者工具行之后、Current version 之前。
+- 该行注册进 `settings.general.item` 插槽，`order: 18`，位置在内置的 `link-opening`(17) 之后、`composer-enter`(20) 之前。不要改成已有内置行（尤其是 20）同分的数值：list 槽在 `priority`、`order` 都相等时按注册时序排，位置会变得不确定。
 - 文案放在插件自己的 `conversation-width` locale 命名空间里，遵循「每个注册者拥有自己那一行的文案」的约定。
 - 修改偏好时直接写入 `--dsh-chat-user-width`。Conversation 是通过 `ResizeObserver` 发布这个变量的，而该观察者在仅偏好变化时不会触发；同源的 `storage` 事件又不会投递给写入方文档，且该包根本没有 `window` 级 `resize` 监听。所以唯一可靠的做法是插件自己按同一套 clamp 写一次这个变量。

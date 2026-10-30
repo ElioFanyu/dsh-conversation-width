@@ -173,6 +173,14 @@ check('slot registered correctly', () => {
   if (r.spec.name !== 'settings.general.item') throw new Error('name=' + r.spec.name);
   if (r.spec.id !== 'conversation-width') throw new Error('id=' + r.spec.id);
   if (r.spec.locale !== 'conversation-width') throw new Error('locale=' + r.spec.locale);
+  /*
+   * 18 is deliberate, not arbitrary. List slots sort by priority then order,
+   * and an equal pair falls back to registration order - so reusing a number a
+   * built-in row already holds (20 is ui-conversation's composer-enter) makes
+   * this row's position depend on plugin activation order. Assert the exact
+   * value so a future edit cannot silently re-introduce the collision.
+   */
+  if (r.spec.order !== 18) throw new Error('order=' + r.spec.order + ' (must stay 18: 17 link-opening < 18 us < 20 composer-enter)');
   if (r.type !== 'function') throw new Error('component type=' + r.type);
   return JSON.stringify(r.spec);
 });
