@@ -114,9 +114,21 @@ localStorage["dsh.conversation.contentWidth"]   // 单位 px，由拖拽手柄�
 | `lib/index.js` | Node 侧。有意留空：所有控件都在浏览器侧。 |
 | `lib/client.js` | 那一行设置项、它的 CSS，以及它的多语言字典。 |
 | `cordis.patch.yml` | 插入 profile 插件行的 bundle patch。 |
+| `locale/en.json`、`locale/zh.json` | 插件卡片在「插件管理」里显示的标题与描述。 |
 | `tools/` | 构建期间使用的一次性诊断脚本，见下。 |
 
 `dsh.client.platform: "web"` 标记这是一个面向 Web 的客户端插件；`exports["./client"]` 就是宿主在 `/plugins/dsh-conversation-width/client.js` 提供的那份 bundle。
+
+### 插件卡片文案（`locale/*.json`）
+
+「设置 → 插件管理」列表里那个卡片的名字和副标题，来自宿主的 `readPluginMeta()`（`dsh-app-boot` 的 `package-meta.js`），而**不**来自 `package.json` 的 `description`：
+
+1. 宿主先解析 `<包名>/locale/en.json`。**这个文件是整个目录的锚点**——它不存在时，宿主一个语言文件都不读，标题直接回退成包名、描述回退成 `package.json` 的英文 `description`。所以 `en.json` 必须存在，哪怕只是为别的语言铺路。
+2. 解析到锚点后，宿主把该目录下**每个** `*.json` 都当作一种语言，文件名必须是语言 id（`en`、`zh`、`zh-CN` 都可以），并且文件里要有非空的 `meta.title` / `meta.description`。
+3. 每个文件都经 `<包名>/locale/<文件名>` 走 Node 的 ESM 解析器读取，所以 `exports` 必须放行这个子路径（本包声明了 `"./locale/*.json": "./locale/*.json"`）。少了这一条，宿主拿到的是 `ERR_PACKAGE_PATH_NOT_EXPORTED`，卡片会静默退回英文——**这一点已经用反证验证过**：把这项导出从清单里去掉，同样的解析立刻失败。
+4. 宿主把这些值拼成 `{ en: …, zh: … }` 的映射，客户端再用 `ctx.locale.resolveText()` 按当前语言的回退链取值（`zh-CN` → `zh-cn` → `zh` → `en`）。
+
+`package.json` 的 `files` 里也列了这两个 JSON，否则发布到 npm 时它们会被丢掉。
 
 ## 工具脚本
 

@@ -7,7 +7,8 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "engines": {
     "node": ">=20",
@@ -34,6 +35,8 @@
     "lib/index.js",
     "lib/client.js",
     "cordis.patch.yml",
+    "locale/en.json",
+    "locale/zh.json",
     "README.md"
   ],
   "peerDependencies": {
