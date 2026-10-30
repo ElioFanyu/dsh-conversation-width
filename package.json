@@ -49,14 +49,14 @@
     }
   },
   "license": "MIT",
-  "author": "Dreamhousemx",
+  "author": "ElioFanyu",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/Dreamhousemx/dsh-conversation-width.git"
+    "url": "git+ssh://git@github.com/ElioFanyu/dsh-conversation-width.git"
   },
-  "homepage": "https://github.com/Dreamhousemx/dsh-conversation-width#readme",
+  "homepage": "https://github.com/ElioFanyu/dsh-conversation-width#readme",
   "bugs": {
-    "url": "https://github.com/Dreamhousemx/dsh-conversation-width/issues"
+    "url": "https://github.com/ElioFanyu/dsh-conversation-width/issues"
   },
   "keywords": [
     "dsh",
