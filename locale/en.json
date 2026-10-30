@@ -1,6 +1,5 @@
 {
   "meta": {
-    "title": "Conversation Width",
     "description": "Conversation display-area width control for DSH — adds a General Settings row that sets the transcript column width, sharing one preference with the built-in drag handles."
   }
 }
