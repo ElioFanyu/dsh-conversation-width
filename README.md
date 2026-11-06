@@ -36,25 +36,35 @@ localStorage["dsh.conversation.contentWidth"]   // 单位 px，由拖拽手柄�
 
 ## 兼容性
 
-已在 **DSH 0.2.1-rc.5** 的宿主上实测通过，同时兼容 0.2.0-rc.2、0.2.1-rc.2、0.2.1-rc.3。
+已在 **DSH 0.2.2-rc.1** 的宿主上实测通过，同时兼容 0.2.1-rc.5、0.2.1-rc.3、0.2.1-rc.2、0.2.0-rc.2。
 
 插件依赖的宿主契约共七项，逐项都对着宿主源码核过：
 
-| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 | 0.2.1-rc.5 |
-| --- | --- | --- | --- | --- |
-| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ | ✓ |
-| 设置项插槽 `settings.general.item` | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ | ✓ |
-| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ | ✓ |
-| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ | ✓ |
-| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ | ✓ |
-| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ | ✓ |
-| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ | ✓ |
+| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 | 0.2.1-rc.5 | 0.2.2-rc.1 |
+| --- | --- | --- | --- | --- | --- |
+| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ | ✓ | ✓ |
+| 设置项插槽 `settings.general.item`（list 槽，按 `order` 排序） | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ | ✓ | ✓ |
+| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ | ✓ | ✓ |
+| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ | ✓ | ✓ |
+| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ | ✓ | ✓ |
+| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ | ✓ | ✓ |
+| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ | ✓ | ✓ |
 
 `engines.dsh` 已声明为 `>=0.2.0-rc.2 <0.3.0`，宿主自己的 `evaluatePluginCompatibility()` 会读它（拿 `^0.3.0` 去试会得到 `REJECTED`，说明这个字段真的在生效）。
 
 **0.2.1 系列的变化不影响本插件**：`@deepseek-ai/dsh-client-ui-slots` 与 `@deepseek-ai/dsh-client-store` 不再作为独立包发布，但仍是 platform seed 词（由前端 vendor bundle 提供）。插件从来没有 `require` 过它们，只通过 cordis 服务注入 `slots` / `locale`，所以代码无需改动。
 
-`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2、0.2.1-rc.3、0.2.1-rc.5 的 seed 表里都在（rc.5 仍是 React 18.3.1）。
+`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2、0.2.1-rc.3、0.2.1-rc.5、0.2.2-rc.1 的 seed 表里都在（rc.5 与 0.2.2-rc.1 仍是 React 18.3.1）。
+
+### 0.2.2-rc.1 上做了什么（1.0.2）
+
+0.2.2-rc.1 没有改动上面七项契约里的任何一项——`WIDTH_PREF_KEY`、`CONTENT_MIN = 640`、`CONTENT_EDGE_BUDGET = 176`、`[data-conversation-content]` + `--dsh-chat-user-width` 的落点、`settings.general.item` 这个 list 槽、`locale.register(ns, {zh,en})` 全部与 0.2.1-rc.5 逐字一致，所以 **`lib/client.js` 的运行时逻辑一行都不用改**。这一版做的是三件事：
+
+1. **`order: 18` 复核。** 0.2.2-rc.1 的 `settings.general.item` 内置行是 `permission -20`、`language 0`、`appearance 10`、`font-size 11`、`transcript-view 12`、`developer-tools 15`、`shortcuts 16`、`link-opening 17`、`composer-enter 20`、`performance-usage 30`、`session-log-upload-toast 90`、`current-version 100`。18 仍然空着，位置仍是 `link-opening` 之后、`composer-enter` 之前；也扫过本机 profile 里所有第三方插件，没有别的注册者用 18。
+2. **CSS 变量逐个核过。** 插件样式表引用的 10 个自定义属性里，8 个主题 token（`--dsw-alias-bg-base`、`--dsw-alias-border-l2`、`--dsw-alias-brand-primary`、`--dsw-alias-interactive-bg-hover`、`--dsw-alias-label-primary`、`--dsw-alias-label-secondary`、`--dsw-alias-label-tertiary`、`--dsw-radius-sm`）在 0.2.2-rc.1 里都还有定义；余下 2 个是插件自己写入的宽度轴变量。注意 `--dsw-alias-brand-primary` 现在是**对比度用的中性色**（浅色 `#0f0f0f`，深色近白），不再是品牌蓝——滑块轨道用它是对的（跟随正文前景色），别改成 `--dsw-alias-brand-primary-new-colorprimary-new-color`，那个才是蓝色品牌色，用在滑块轨道上会和轨道底色撞。
+3. **把“检查契约”变成一条命令。** 新增 `tools/_dcw_check_contracts.cjs`：七项契约、三个 clamp 常量、`order: 18` 是否被内置行或第三方插件占用，全部逐条断言；下一版宿主挪动宽度轴时它会直接指出是哪一条变了。同时 `_dcw_test_client.cjs` 仍然锁住 `order === 18`。
+
+`package.json` 的 `dsh.compatibility.dshReleases` 里补登了 `0.2.2-rc.1`（该字段目前仍无宿主消费者，属于给市场与未来工具用的声明），`engines.dsh` 与 peer 范围保持不变——`>=0.2.0-rc.2 <0.3.0` 本来就覆盖 `0.2.2-rc.1`。
 
 ### 0.2.1-rc.5 上适配掉的两处偏差
 
@@ -151,6 +161,7 @@ $env:ELECTRON_RUN_AS_NODE = "1"
 | `_dcw_probe_slot.cjs` | `settings.general.item` 这个插槽是否存在，各行的落位顺序如何。 |
 | `_dcw_probe_pnpm.cjs` | profile 如何解析链接进来的本地包。 |
 | `_dcw_livegraph.cjs` | 按宿主 `resolveMeta` 的同一套判定，验证插件在真实 profile 里能否被组装进客户端模块图。 |
+| `_dcw_check_contracts.cjs` | 七项宿主契约、三个 clamp 常量、`order: 18` 是否被内置行或第三方插件占用——逐条断言，宿主挪动宽度轴时直接指出是哪一条变了。 |
 | `_dcw_yaml_check.cjs` | 内置的 YAML 解析器能否接受 `cordis.patch.yml`。 |
 | `_dcw_check_peers.cjs` | 插件声明的每个 peer 与每个 `require()` 在当前宿主上是否都成立——用来抓宿主升级导致的契约漂移。 |
 | `_dcw_test_client.cjs` | 用一个极简 DOM 和被 shim 的 `react`，跑真正的 bundle 工厂函数，然后检查返回的树。 |
