@@ -51,20 +51,31 @@ try {
 
 say('');
 say('== host integration points ==');
+/**
+ * Host bundles are minified: a release may swap string literals between " and `
+ * and drop the spaces around operators without changing any behaviour. Matching
+ * literal text therefore reports drift that is not real, so each needle below is
+ * a regex that tolerates both quote forms and missing whitespace.
+ */
 const checks = [
-  ['dsh-client-modules', 'lib/index.js', 'clientExportOf', 'dsh.client + exports["./client"] must resolve'],
-  ['dsh-client-ui-settings-general', 'lib/client.js', 'renderSlot("settings.general.item"', 'the slot the row registers into'],
-  ['dsh-client-locale', 'lib/client.js', 'register(ns, localeOrDicts, dict)', 'locale.register(ns, {zh,en})'],
-  ['dsh-client-ui-conversation', 'lib/client.js', 'dsh.conversation.contentWidth', 'the width preference key'],
-  ['dsh-client-ui-conversation', 'lib/client.js', '--dsh-chat-user-width', 'the variable the row drives'],
+  ['dsh-client-modules', 'lib/index.js', /clientExportOf/,
+    'dsh.client + exports["./client"] must resolve'],
+  ['dsh-client-ui-settings-general', 'lib/client.js', /renderSlot\(\s*['"`]settings\.general\.item['"`]/,
+    'the slot the row registers into'],
+  ['dsh-client-locale', 'lib/client.js', /register\(\s*ns\s*,\s*localeOrDicts\b/,
+    'locale.register(ns, {zh,en})'],
+  ['dsh-client-ui-conversation', 'lib/client.js', /WIDTH_PREF_KEY\s*=\s*['"`]dsh\.conversation\.contentWidth['"`]/,
+    'the width preference key'],
+  ['dsh-client-ui-conversation', 'lib/client.js', /--dsh-chat-user-width/,
+    'the variable the row drives'],
 ];
-for (const [pkg, file, needle, why] of checks) {
+for (const [pkg, file, re, why] of checks) {
   const f = p.join(NM, pkg, file);
   let ok = false;
-  try { ok = fs.readFileSync(f, 'utf8').includes(needle); } catch {}
+  try { ok = re.test(fs.readFileSync(f, 'utf8')); } catch {}
   if (!ok) failures++;
   say('   ' + (ok ? 'ok  ' : 'MISS') + '  ' + why);
-  if (!ok) say('         (expected ' + JSON.stringify(needle) + ' in ' + pkg + '/' + file + ')');
+  if (!ok) say('         (expected ' + re + ' in ' + pkg + '/' + file + ')');
 }
 
 say('');

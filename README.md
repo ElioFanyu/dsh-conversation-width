@@ -36,25 +36,48 @@ localStorage["dsh.conversation.contentWidth"]   // 单位 px，由拖拽手柄�
 
 ## 兼容性
 
-已在 **DSH 0.2.2-rc.1** 的宿主上实测通过，同时兼容 0.2.1-rc.5、0.2.1-rc.3、0.2.1-rc.2、0.2.0-rc.2。
+已在 **DSH 0.2.2-rc.2** 的宿主上实测通过，同时兼容 0.2.2-rc.1、0.2.1-rc.5、0.2.1-rc.3、0.2.1-rc.2、0.2.0-rc.2。
 
 插件依赖的宿主契约共七项，逐项都对着宿主源码核过：
 
-| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 | 0.2.1-rc.5 | 0.2.2-rc.1 |
-| --- | --- | --- | --- | --- | --- |
-| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ | ✓ | ✓ |
-| 设置项插槽 `settings.general.item`（list 槽，按 `order` 排序） | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ | ✓ | ✓ |
-| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ | ✓ | ✓ |
-| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ | ✓ | ✓ |
-| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ | ✓ | ✓ |
-| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ | ✓ | ✓ |
-| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ | ✓ | ✓ |
+| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 | 0.2.1-rc.5 | 0.2.2-rc.1 | 0.2.2-rc.2 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 设置项插槽 `settings.general.item`（list 槽，按 `order` 排序） | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 `engines.dsh` 已声明为 `>=0.2.0-rc.2 <0.3.0`，宿主自己的 `evaluatePluginCompatibility()` 会读它（拿 `^0.3.0` 去试会得到 `REJECTED`，说明这个字段真的在生效）。
 
 **0.2.1 系列的变化不影响本插件**：`@deepseek-ai/dsh-client-ui-slots` 与 `@deepseek-ai/dsh-client-store` 不再作为独立包发布，但仍是 platform seed 词（由前端 vendor bundle 提供）。插件从来没有 `require` 过它们，只通过 cordis 服务注入 `slots` / `locale`，所以代码无需改动。
 
-`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2、0.2.1-rc.3、0.2.1-rc.5、0.2.2-rc.1 的 seed 表里都在（rc.5 与 0.2.2-rc.1 仍是 React 18.3.1）。
+`react` 与 `react/jsx-runtime` 是插件唯一 `require` 的两个模块，在 0.2.0-rc.2、0.2.1-rc.3、0.2.1-rc.5、0.2.2-rc.1、0.2.2-rc.2 的 seed 表里都在（rc.5 之后一直是 React 18.3.1，seed 表本身逐字未变）。
+
+### 0.2.2-rc.2 上做了什么（1.0.3）
+
+**宿主契约仍然一项未破，运行时逻辑依旧零改动。** 七项契约逐条复核通过：`WIDTH_PREF_KEY`、`CONTENT_MIN = 640`、`CONTENT_EDGE_BUDGET = 176`、`.64 / 920` 回退式、`[data-conversation-content]` + `--dsh-chat-user-width` 落点、`settings.general.item` 的 `kind: list` 声明、`locale.register(ns, localeOrDicts, dict)`，全部与 rc.1 逐字一致。宽度轴 CSS 一行未变：
+
+```css
+--dsh-chat-content-width: var(--dsh-chat-user-width,
+    clamp(680px, calc(var(--dsh-conversation-column-width,0px) * .64), 920px));
+```
+
+全宿主树扫描确认**仍然只有 `dsh-client-ui-conversation` 一个包**读写这个偏好键与那个变量，没有出现第二个宽度所有者。
+
+**官方升级指南也核过了。** 安装目录里的 `docs/upgrade-guide` 对 rc.1 → rc.2 这一段只有 `v0.2.2-rc.1/` 一组（不存在 `v0.2.2-rc.2/`），共 22 条条目，逐条比对后**没有一条命中本插件涉及的表面**——它们集中在账号通知 API、Forge、CUA 原生窗口、终端 bundle、附件错误码、web search 计费、`BundleInfo.update`（`pluginManager` 侧 API，本插件不用）与 skill 改名。唯一沾边的是 `window-drag-regions`，但它只影响「覆盖可拖拽标题栏的自定义浮层」，且**仅 macOS Desktop**；本插件是设置页内的普通行，没有浮层，不适用。
+
+**这一版真正修的是我自己的检测脚本。** rc.2 的 bundle 重新压缩过，字符串字面量从 `"…"` 变成了反引号、`=` 两侧空格也被去掉。我上一版写的 `_dcw_check_contracts.cjs` 和 `_dcw_livegraph.cjs` 用的是字面量精确匹配，于是对着一堆**其实完好**的契约报了 6 处 FAIL。这类假失败比漏检更危险——它会训练人忽略红色输出。现在契约匹配全部改成引号无关 + 容忍空白的正则，并顺手修掉另一个更隐蔽的缺陷：
+
+registry 包（`dsh-cordis-client-runner`）为每个 slot 携带一段 `example:` 文档字符串，里面是完整的 `ctx.slots.register({ id: 'my-entry', order: 100 … })` 片段。纯文本扫描会把它当成真实注册，于是「内置行占用 order」这张表里凭空多出一行 `100 my-entry`。现在按「前面最近的 `example:` 标记且其模板字符串尚未闭合」判定文档区并跳过 —— 判定刻意收窄到 `example:` 一种，因为更宽的 `summary:` 规则会误伤紧跟散文的 `css$N = "…"` 样式串，把宽度轴 CSS 也判成文档（这个坑我踩过一次，已回退）。
+
+**验证方式。** 除了正向全绿，还做了 4 个负向测试，确认它该红的时候真的会红：改掉它要找的偏好键名、把 `CONTENT_EDGE_BUDGET` 的期望值写成 999、把扫描目标换成一个不存在的槽名（此时必须报「扫描器本身坏了」而不是静默通过）、把期望 order 改成 20（应报与 `composer-enter` 撞车）。四个全部按预期失败。
+
+`order: 18` 依旧空闲。rc.2 的内置行多了一个 `desktop-update-channel 95`（settings-general 自己的桌面更新通道行），其余与 rc.1 相同，18 仍在 `link-opening`(17) 与 `composer-enter`(20) 之间，也仍无第三方插件占用。
+
+`engines.dsh` 与 peer 范围**继续不动**：`>=0.2.0-rc.2 <0.3.0` 已用 node-semver 实测覆盖 rc.2，放宽它等于宣称未经验证的支持。`dshReleases` 补登 `0.2.2-rc.2`。
 
 ### 0.2.2-rc.1 上做了什么（1.0.2）
 

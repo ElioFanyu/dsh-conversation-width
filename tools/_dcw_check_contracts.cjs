@@ -7,6 +7,13 @@
 // nothing to make and are invisible until someone drags a window, so check them
 // deliberately.
 //
+// Matching rules learned the hard way on 0.2.2-rc.2, whose bundles ship with
+// backtick string literals and no space around `=`:
+//   * every literal below is matched quote-agnostically and whitespace-tolerantly,
+//     so a minifier changing " to ` or dropping spaces is not a false failure;
+//   * a host bundle's own `example:` / `doc:` strings contain registration
+//     snippets, so text found inside one is never counted as a real registration.
+//
 // Needs DSH_ASAR - see tools/dsh-env.cjs. DSH_PROFILE_DIR is optional and only
 // adds the installed-plugin scan for `settings.general.item` order collisions.
 const fs = require('node:fs');
@@ -26,37 +33,85 @@ function read(pkg, file) {
   try { return fs.readFileSync(p.join(NM, pkg, file), 'utf8'); } catch { return null; }
 }
 
-say('== the seven host contracts ==');
-const CONTRACTS = [
-  ['dsh-client-modules', 'lib/index.js', 'decl.platform !== "web"',
-    'client-plugin gate is still dsh.client.platform === "web"'],
-  ['dsh-client-modules', 'lib/index.js', 'exportsField["./client"]',
-    'exports["./client"] is still the bundle entry'],
-  ['dsh-client-ui-settings-general', 'lib/client.js', 'renderSlot("settings.general.item"',
-    'the General section still renders settings.general.item'],
-  ['dsh-client-ui-settings-general', 'lib/client.js', 'kind: "list"',
-    'settings.general.item is still a list slot (order sorts it)'],
-  ['dsh-client-locale', 'lib/client.js', 'register(ns, localeOrDicts, dict)',
-    'locale.register(ns, {zh,en}) is still the dictionary API'],
-  ['dsh-client-ui-conversation', 'lib/client.js', 'dsh.conversation.contentWidth',
-    'the width preference key is unchanged'],
-  ['dsh-client-ui-conversation', 'lib/client.js', '--dsh-chat-user-width',
-    'the published width variable is unchanged'],
-];
-for (const [pkg, file, needle, why] of CONTRACTS) {
-  const text = read(pkg, file);
-  if (text === null) fail(`cannot read ${pkg}/${file}`);
-  else if (!text.includes(needle)) fail(`${why}  (missing ${JSON.stringify(needle)})`);
-  else ok(why);
+/** A literal without its quote character, which hosts emit as " or ` or '. */
+const Q = `['"\`]`;
+
+/**
+ * True when `index` sits inside a real slot *registration snippet* that the host
+ * ships as documentation rather than as code.
+ *
+ * Two shapes exist in these bundles and they need different rules:
+ *   * the registry (`dsh-cordis-client-runner`) carries one `example:` template
+ *     literal per slot holding a whole `ctx.slots.register({...})` snippet, so a
+ *     naive search finds fake rows such as id "my-entry";
+ *   * ordinary CSS lives in `css$N = "..."` literals that follow prose
+ *     properties like `summary:` and must never be treated as documentation.
+ *
+ * So the test is deliberately narrow: the offset is documentation only when the
+ * nearest preceding doc marker is `example:` (the registry's snippet key) and its
+ * template literal is still open. Everything else is treated as code.
+ *
+ * @param text full file source.
+ * @param index offset of the match being judged.
+ * @returns whether the match lives in a documentation example.
+ */
+function insideDocString(text, index) {
+  const before = text.slice(0, index);
+  const marker = before.lastIndexOf("example:");
+  if (marker === -1) return false;
+  const afterMarker = before.slice(marker);
+  // An unterminated template literal means the example never closed: we are in it.
+  return (afterMarker.match(/`/g) || []).length % 2 === 1;
 }
+
+/**
+ * Assert one regex matches the file in executable (non-doc) position.
+ * @param label what the contract is, in English.
+ * @param text file source, or null.
+ * @param re pattern to find.
+ */
+function assertMatch(label, text) {
+  return (re) => {
+    if (text === null) return fail(`cannot read ${label}`);
+    let m;
+    const rx = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+    while ((m = rx.exec(text)) !== null) {
+      if (!insideDocString(text, m.index)) return ok(`${label} -> ${m[0].replace(/\s+/g, ' ').slice(0, 70)}`);
+    }
+    return fail(`${label}  (no match for ${re})`);
+  };
+}
+
+say('== the seven host contracts ==');
+const modulesIdx = read('dsh-client-modules', 'lib/index.js');
+const generalClient = read('dsh-client-ui-settings-general', 'lib/client.js');
+const localeClient = read('dsh-client-locale', 'lib/client.js');
+const convClient = read('dsh-client-ui-conversation', 'lib/client.js');
+
+assertMatch('client-plugin gate is dsh.client.platform === "web"', modulesIdx)(
+  new RegExp(`\\.platform\\s*!==\\s*${Q}web${Q}`));
+assertMatch('exports["./client"] is the bundle entry', modulesIdx)(
+  new RegExp(`exportsField\\[\\s*${Q}\\.\\/client${Q}\\s*\\]`));
+assertMatch('General section renders settings.general.item', generalClient)(
+  new RegExp(`renderSlot\\(\\s*${Q}settings\\.general\\.item${Q}`));
+assertMatch('settings.general.item is a list slot', generalClient)(
+  new RegExp(`${Q}settings\\.general\\.item${Q}\\s*:\\s*\\{\\s*kind\\s*:\\s*${Q}list${Q}`));
+assertMatch('locale.register(ns, dicts) is the dictionary API', localeClient)(
+  /register\(\s*ns\s*,\s*localeOrDicts\b/);
+assertMatch('the width preference key is unchanged', convClient)(
+  new RegExp(`WIDTH_PREF_KEY\\s*=\\s*${Q}dsh\\.conversation\\.contentWidth${Q}`));
+assertMatch('the published width variable is unchanged', convClient)(
+  new RegExp(`${Q}--dsh-chat-user-width${Q}|--dsh-chat-user-width`));
+assertMatch('the width axis clamps through the user variable', convClient)(
+  new RegExp(`--dsh-chat-content-width\\s*:\\s*var\\(\\s*--dsh-chat-user-width`));
 
 say('');
 say('== the clamp the row mirrors ==');
-const conv = read('dsh-client-ui-conversation', 'lib/client.js') || '';
+const conv = convClient || '';
 const num = (re) => { const m = conv.match(re); return m === null ? null : Number(m[1]); };
-const CONTENT_MIN = num(/const CONTENT_MIN = (\d+)/);
-const EDGE = num(/const CONTENT_EDGE_BUDGET = (\d+)/);
-const FALLBACK_MAX = num(/Math\.min\(columnWidth \* \.64, (\d+)\)/);
+const CONTENT_MIN = num(/\bCONTENT_MIN\s*=\s*(\d+)/);
+const EDGE = num(/\bCONTENT_EDGE_BUDGET\s*=\s*(\d+)/);
+const FALLBACK_MAX = num(/Math\.min\(\s*columnWidth\s*\*\s*\.64\s*,\s*(\d+)\s*\)/);
 for (const [name, value, expected] of [
   ['CONTENT_MIN', CONTENT_MIN, 640],
   ['CONTENT_EDGE_BUDGET', EDGE, 176],
@@ -67,35 +122,57 @@ for (const [name, value, expected] of [
   else ok(`${name} = ${value}`);
 }
 
+/**
+ * Collect real `settings.general.item` registrations from one source file:
+ * an options object that carries both `name: <slot>` and an `id`, outside doc
+ * strings. Doc examples always reuse the placeholder id "my-entry", and a real
+ * registration always has an id, so requiring both is what separates them.
+ * @param text source of a client bundle.
+ * @param source label recorded on each hit.
+ * @returns registration records.
+ */
+function rowsIn(text, source) {
+  const found = [];
+  const re = new RegExp(`name\\s*:\\s*${Q}settings\\.general\\.item${Q}`, 'g');
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (insideDocString(text, m.index)) continue;
+    const win = text.slice(m.index, m.index + 700);
+    const id = win.match(new RegExp(`\\bid\\s*:\\s*${Q}([^${'`"\''}]+)${Q}`))?.[1];
+    if (id === undefined) continue;
+    const orderRaw = win.match(/\border\s*:\s*(-?[\d.]+)/)?.[1];
+    found.push({ id, order: orderRaw === undefined ? null : Number(orderRaw), source });
+  }
+  return found;
+}
+
 say('');
 say('== the row order has no built-in neighbour on 18 ==');
 const ORDER = 18;
-const hits = [];
+const builtin = [];
 for (const entry of fs.readdirSync(NM, { withFileTypes: true })) {
   if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-  const f = p.join(NM, entry.name, 'lib', 'client.js');
   let text;
-  try { text = fs.readFileSync(f, 'utf8'); } catch { continue; }
-  const re = /name:\s*"settings\.general\.item"/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const win = text.slice(m.index, m.index + 700);
-    const id = win.match(/id:\s*"([^"]*)"/)?.[1];
-    const order = Number(win.match(/order:\s*(-?[\d.]+)/)?.[1] ?? 0);
-    if (id !== undefined) hits.push({ id, order, pkg: entry.name });
-  }
+  try { text = fs.readFileSync(p.join(NM, entry.name, 'lib', 'client.js'), 'utf8'); } catch { continue; }
+  if (!text.includes('settings.general.item')) continue;
+  builtin.push(...rowsIn(text, entry.name));
 }
-hits.sort((a, b) => a.order - b.order);
-say('   ' + hits.map((h) => `${h.order} ${h.id}`).join(' | '));
-const collided = hits.filter((h) => h.order === ORDER);
-for (const c of collided) fail(`built-in row "${c.id}" also uses order ${ORDER} (${c.pkg})`);
-if (collided.length === 0) ok(`no built-in registration uses order ${ORDER}`);
+if (builtin.length === 0) {
+  fail('found no built-in settings.general.item registration at all - the scan itself is broken');
+} else {
+  builtin.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  say('   ' + builtin.map((h) => `${h.order} ${h.id}`).join(' | '));
+  const collided = builtin.filter((h) => h.order === ORDER);
+  for (const c of collided) fail(`built-in row "${c.id}" also uses order ${ORDER} (${c.source})`);
+  if (collided.length === 0) ok(`no built-in registration uses order ${ORDER}`);
+}
 
 say('');
 if (process.env.DSH_PROFILE_DIR) {
   say('== installed plugins do not claim 18 either ==');
   const profileNM = p.join(env.profileDir(), 'node_modules');
   const seen = [];
+  const scanned = { files: 0 };
   const walk = (dir, depth) => {
     if (depth > 4) return;
     let entries;
@@ -112,16 +189,17 @@ if (process.env.DSH_PROFILE_DIR) {
       if (p.basename(p.dirname(full)) !== 'lib' || e.name !== 'client.js') continue;
       let text;
       try { text = fs.readFileSync(full, 'utf8'); } catch { continue; }
-      if (!text.includes('name: "settings.general.item"')) continue;
-      if (full.includes('dsh-conversation-width')) continue;
-      for (const m of text.matchAll(/order:\s*(-?[\d.]+)/g)) {
-        if (Number(m[1]) === ORDER) seen.push(full.replace(profileNM, '<profile>'));
+      if (!text.includes('settings.general.item')) continue;
+      scanned.files++;
+      if (full.includes(`${p.sep}dsh-conversation-width${p.sep}`)) continue;
+      for (const row of rowsIn(text, full.replace(profileNM, '<profile>'))) {
+        if (row.order === ORDER) seen.push(row.source);
       }
     }
   };
   walk(profileNM, 0);
   for (const s of seen) fail(`another installed plugin registers order ${ORDER}: ${s}`);
-  if (seen.length === 0) ok(`no installed third-party plugin uses order ${ORDER}`);
+  if (seen.length === 0) ok(`no installed third-party plugin uses order ${ORDER} (${scanned.files} bundle(s) inspected)`);
   say('');
 }
 
