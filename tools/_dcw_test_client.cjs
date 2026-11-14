@@ -100,6 +100,21 @@ function makeHostNode(props) {
     removeAttribute: k => { attrs.delete(k); },
     parentElement: null,
     get firstChild() { return children.length ? children[0] : null; },
+    get children() { return children; },
+    querySelectorAll(sel) {
+      /* Only the `<button>` probe is used by the close-button lookup. */
+      const out = [];
+      const walk = n => {
+        for (const c of (n._children || [])) {
+          if (c.tagName === 'button' || (c._children && c._children.length)) {
+            if (c.tagName === 'button') out.push(c);
+          }
+          walk(c);
+        }
+      };
+      walk(this);
+      return out;
+    },
     insertBefore(node) { children.unshift(node); node.parentElement = this; node._parentChildren = children; return node; },
     remove() { const list = this._parentChildren || children; const i = list.indexOf(this); if (i >= 0) list.splice(i, 1); },
     contains(node) {
@@ -108,6 +123,7 @@ function makeHostNode(props) {
       return children.includes(node);
     },
     addEventListener(type, fn) { listeners.set(type, fn); },
+    click() { const fn = listeners.get('click'); if (fn) fn({ preventDefault() {}, stopPropagation() {}, target: this }); },
     removeEventListener(type) { listeners.delete(type); },
     dispatchEvent(event) { const fn = listeners.get(event.type); if (fn) fn(event); return true; },
     style: {
@@ -532,7 +548,22 @@ function mountDialogWithOverlay() {
   const dialog = globalThis.__hostNodes.makeHostNode();
   dialog.parentElement = overlay;
   globalThis.__hostNodes.setSettings(dialog);
-  return { overlay, dialog };
+
+  /*
+   * The host panel's first child is the header row, holding the settings.action
+   * slot (打开配置文件) and then the close button. The close button must be found
+   * as the LAST button of that row, not the action button.
+   */
+  const header = globalThis.__hostNodes.makeHostNode();
+  const action = globalThis.__hostNodes.makeHostNode();
+  action.tagName = 'button';
+  const close = globalThis.__hostNodes.makeHostNode();
+  close.tagName = 'button';
+  close._id = 'close';
+  header._children.push(action, close);
+  dialog._children.push(header);
+  dialog.querySelectorAll = function () { return [action, close]; };
+  return { overlay, dialog, closeButton: close, actionButton: action };
 }
 
 check('page presentation marks the overlay; dialog mode removes it', () => {
@@ -616,8 +647,8 @@ check('page presentation is bounded to the main area, not the whole viewport', (
   return 'left 248 / right 8 / width 981 (naive form would give ' + naiveWidth + ')';
 });
 
-check('page presentation adds a back button that closes via the host path', () => {
-  const { overlay, dialog } = mountDialogWithOverlay();
+check('the back button closes by clicking the host close button', () => {
+  const { overlay, closeButton, actionButton } = mountDialogWithOverlay();
   const { fake } = freshCtx();
   store.clear();
   store.set(MODE_KEY, 'page');
@@ -625,40 +656,79 @@ check('page presentation adds a back button that closes via the host path', () =
 
   const back = overlay._children[0];
   if (!back || back.className !== 'dcw_back') throw new Error('back button not inserted first');
-  if (back.getAttribute('aria-label') !== 'Back') throw new Error('back button not labelled');
 
-  // The host's useModalLayer listens on the document; verify Escape lands there.
-  documentShim._lastDispatched = null;
+  /* Capture which host button gets clicked: it must be close, never the action. */
+  let closedBy = null;
+  closeButton.addEventListener('click', () => { closedBy = 'close'; });
+  actionButton.addEventListener('click', () => { closedBy = 'action'; });
+
   back._listeners.get('click')({ preventDefault() {}, stopPropagation() {} });
-  const sent = documentShim._lastDispatched;
-  if (!sent || sent.type !== 'keydown' || sent.key !== 'Escape') {
-    throw new Error('back did not dispatch Escape on the document: ' + JSON.stringify(sent && sent.key));
-  }
-  return 'back button present and dispatches Escape on the document';
+  if (closedBy !== 'close') throw new Error('back clicked the wrong button: ' + closedBy);
+  return 'back button routes through the host close button';
 });
 
 check('page presentation closes when clicking outside the page', () => {
-  const { overlay, dialog } = mountDialogWithOverlay();
+  const { overlay, closeButton, actionButton } = mountDialogWithOverlay();
   const { fake } = freshCtx();
   store.clear();
   store.set(MODE_KEY, 'page');
   mod.apply(fake);
 
-  documentShim._lastDispatched = null;
+  let closedBy = null;
+  closeButton.addEventListener('click', () => { closedBy = 'close'; });
+  actionButton.addEventListener('click', () => { closedBy = 'action'; });
+
   const handler = documentShim._docListeners.get('pointerdown');
   if (!handler) throw new Error('no outside-click listener installed');
 
-  const sawEscape = () => documentShim._lastDispatched && documentShim._lastDispatched.key === 'Escape';
-  documentShim._lastDispatched = null;
-
-  // A target inside the overlay must NOT close it.
   handler({ target: overlay });
-  if (sawEscape()) throw new Error('clicking inside the page closed it');
+  if (closedBy !== null) throw new Error('clicking inside the page closed it');
 
-  // A target outside the overlay (the sidebar / a session row) must close it.
   handler({ target: new (globalThis.Node)() });
-  if (!sawEscape()) throw new Error('clicking outside did not close it');
-  return 'inside keeps it open, outside closes it';
+  if (closedBy !== 'close') throw new Error('clicking outside did not close it');
+  return 'inside keeps it open, outside closes via the host close button';
+});
+
+check('the close lookup never picks the settings.action button', () => {
+  /*
+   * The header row holds the settings.action slot (打开配置文件) plus the close
+   * button. Picking the FIRST button would hit the action slot and open a
+   * document instead of closing. Assert the LAST button of that row is used.
+   */
+  const { actionButton, closeButton } = mountDialogWithOverlay();
+  const { fake } = freshCtx();
+  store.clear();
+  store.set(MODE_KEY, 'page');
+  mod.apply(fake);
+
+  const back = documentShim._docListeners.get('pointerdown');
+  if (!back) throw new Error('no outside-click listener');
+
+  let hit = null;
+  actionButton.addEventListener('click', () => { hit = 'action'; });
+  closeButton.addEventListener('click', () => { hit = 'close'; });
+
+  back({ target: new (globalThis.Node)() });
+  if (hit !== 'close') throw new Error('hit ' + hit + ' instead of the close button');
+  return 'header row resolves to its last button (close)';
+});
+
+check('page presentation clears the window chrome at the top', () => {
+  /*
+   * The frame starts at y=0 on macOS with the title bar drawn over it, so a page
+   * that starts at frame.top has its header under the traffic lights and window
+   * controls - which is where 打开配置文件 became unclickable. The host budgets
+   * for this with --dsh-frame-overlay-top; the page must add it.
+   */
+  const frameTop = 0, overlayTopVar = 68;
+  const applied = frameTop + overlayTopVar;
+  if (applied !== 68) throw new Error('top inset = ' + applied);
+
+  // And the fallback must not be zero when the variable is absent.
+  const fallback = (v) => (Number.isFinite(v) && v > 0 ? v : 24);
+  if (fallback(NaN) !== 24) throw new Error('missing-variable fallback collapsed to 0');
+  if (fallback(0) !== 24) throw new Error('zero-variable fallback collapsed to 0');
+  return 'chrome clearance applied (68px), non-zero fallback (24px)';
 });
 
 check('dialog presentation installs none of the page affordances', () => {

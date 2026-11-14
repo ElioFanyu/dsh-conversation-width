@@ -140,6 +140,14 @@ assertMatch('the Settings panel is still the dialog element', generalClient)(
   /* The host writes the key unquoted (`role:`dialog``), so accept both forms. */
   new RegExp(`(?:^|[,{])\\s*${Q}?role${Q}?\\s*:\\s*${Q}dialog${Q}`));
 
+/*
+ * Page presentation budgets for the window chrome with the host's own variable.
+ * If it is renamed, the page header slides under the title bar and the panel's
+ * buttons stop being clickable - a failure that only shows up visually.
+ */
+assertMatch('the window-chrome top budget variable exists', read('dsh-client-ui-layout', 'lib/client.js'))(
+  new RegExp(`--dsh-frame-overlay-top`));
+
 say('== the clamp the row mirrors ==');
 const conv = convClient || '';
 const num = (re) => { const m = conv.match(re); return m === null ? null : Number(m[1]); };
