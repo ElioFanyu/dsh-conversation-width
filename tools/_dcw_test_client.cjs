@@ -91,7 +91,19 @@ function makeHostNode(props) {
     _listeners: listeners,
     dataset: {},
     className: '',
+    classList: (() => {
+      /* One Set per node: a shared literal would let class names leak between
+       * elements and hide exactly the kind of bug these tests look for. */
+      const set = new Set();
+      return {
+        add(c) { set.add(c); },
+        remove(c) { set.delete(c); },
+        contains(c) { return set.has(c); }
+      };
+    })(),
     textContent: '',
+    /* Real DOM uppercases tagName, and elements created without one are DIVs. */
+    tagName: 'DIV',
     isConnected: true,
     get ownerDocument() { return documentShim; },
     hasAttribute: k => attrs.has(k),
@@ -106,9 +118,7 @@ function makeHostNode(props) {
       const out = [];
       const walk = n => {
         for (const c of (n._children || [])) {
-          if (c.tagName === 'button' || (c._children && c._children.length)) {
-            if (c.tagName === 'button') out.push(c);
-          }
+          if (c.tagName === 'BUTTON') out.push(c);
           walk(c);
         }
       };
@@ -550,20 +560,51 @@ function mountDialogWithOverlay() {
   globalThis.__hostNodes.setSettings(dialog);
 
   /*
-   * The host panel's first child is the header row, holding the settings.action
-   * slot (打开配置文件) and then the close button. The close button must be found
-   * as the LAST button of that row, not the action button.
+   * The panel's REAL child order, which is what made two earlier close-button
+   * lookups pick the wrong element: a title row, then the nav column (one button
+   * per section), then the header row, then the scrollable options area. A shim
+   * with only a header would have passed both broken versions, so the nav and
+   * options rows are modelled here deliberately.
    */
+  const titleRow = globalThis.__hostNodes.makeHostNode();
+  titleRow.textContent = '设置';
+
+  const nav = globalThis.__hostNodes.makeHostNode();
+  nav.tagName = 'nav';
+  const navButtons = [];
+  for (const label of ['账号与余额', '通用设置', '模型', '插件市场', '压缩管控', 'MCP 连接器']) {
+    const b = globalThis.__hostNodes.makeHostNode();
+    b.tagName = 'BUTTON';
+    b.textContent = label;
+    nav._children.push(b);
+    navButtons.push(b);
+  }
+  const lastNav = globalThis.__hostNodes.makeHostNode();
+  lastNav.tagName = 'BUTTON';
+  lastNav.textContent = '侧边卡片';
+  nav._children.push(lastNav);
+  navButtons.push(lastNav);
+
   const header = globalThis.__hostNodes.makeHostNode();
+  const actions = globalThis.__hostNodes.makeHostNode();
   const action = globalThis.__hostNodes.makeHostNode();
-  action.tagName = 'button';
+  action.tagName = 'BUTTON';
+  action.textContent = '打开配置文件';
+  actions._children.push(action);
   const close = globalThis.__hostNodes.makeHostNode();
-  close.tagName = 'button';
+  close.tagName = 'BUTTON';
+  close.textContent = '×';
   close._id = 'close';
-  header._children.push(action, close);
-  dialog._children.push(header);
-  dialog.querySelectorAll = function () { return [action, close]; };
-  return { overlay, dialog, closeButton: close, actionButton: action };
+  header._children.push(actions, close);
+
+  const options = globalThis.__hostNodes.makeHostNode();
+  const sectionCtl = globalThis.__hostNodes.makeHostNode();
+  sectionCtl.tagName = 'BUTTON';
+  sectionCtl.textContent = 'section control';
+  options._children.push(sectionCtl);
+
+  dialog._children.push(titleRow, nav, header, options);
+  return { overlay, dialog, closeButton: close, actionButton: action, lastNavButton: lastNav, sectionButton: sectionCtl, titleRow };
 }
 
 check('page presentation marks the overlay; dialog mode removes it', () => {
@@ -648,14 +689,15 @@ check('page presentation is bounded to the main area, not the whole viewport', (
 });
 
 check('the back button closes by clicking the host close button', () => {
-  const { overlay, closeButton, actionButton } = mountDialogWithOverlay();
+  const { overlay, dialog, closeButton, actionButton, titleRow } = mountDialogWithOverlay();
   const { fake } = freshCtx();
   store.clear();
   store.set(MODE_KEY, 'page');
   mod.apply(fake);
 
-  const back = overlay._children[0];
-  if (!back || back.className !== 'dcw_back') throw new Error('back button not inserted first');
+  /* The button now lives inside the title row, not at the overlay's front. */
+  const back = titleRow._children[0];
+  if (!back || back.className !== 'dcw_back') throw new Error('back button not inside the title row');
 
   /* Capture which host button gets clicked: it must be close, never the action. */
   let closedBy = null;
