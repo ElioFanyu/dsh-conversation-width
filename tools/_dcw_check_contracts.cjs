@@ -114,9 +114,6 @@ assertMatch('the width axis clamps through the user variable', convClient)(
  */
 say('');
 say('== the page-width anchors ==');
-const layoutClient = read('dsh-client-ui-layout', 'lib/client.js');
-assertMatch('global panels are marked [data-global-panel]', layoutClient)(
-  new RegExp(`data-global-panel`));
 assertMatch('the Settings dialog is marked data-shortcut-modal=settings', generalClient)(
   /* The bundle writes the key as \"data-shortcut-modal\":`settings` (the inner
    * quotes are escaped because it sits in a template literal), so match the
@@ -126,8 +123,6 @@ assertMatch('the Settings dialog still defaults to width:800px', generalClient)(
   /width\s*:\s*800px/);
 assertMatch('the dialog keeps its viewport max-width safety net', generalClient)(
   new RegExp(`max-width\\s*:\\s*calc\\(\\s*100vw\\s*-\\s*48px\\s*\\)`));
-assertMatch('global panels still cap content at 960px', read('dsh-client-ui-plugin-manager', 'lib/client.js'))(
-  new RegExp(`max-width\\s*:\\s*960px`));
 
 say('');
 /*
@@ -202,7 +197,7 @@ if (builtin.length === 0) {
   builtin.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   say('   ' + builtin.map((h) => `${h.order} ${h.id}`).join(' | '));
   /* Every order this plugin claims, so a new host row cannot silently land on one. */
-  const CLAIMED_ORDERS = [18, 19, 19.5, 21];
+  const CLAIMED_ORDERS = [18, 19, 19.5];
   const collided = builtin.filter((h) => CLAIMED_ORDERS.includes(h.order));
   for (const c of collided) fail(`built-in row "${c.id}" also uses order ${c.order} (${c.source})`);
   if (collided.length === 0) ok(`no built-in registration uses ${CLAIMED_ORDERS.join(', ')}`);

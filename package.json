@@ -1,7 +1,7 @@
 {
   "name": "dsh-conversation-width",
-  "version": "1.2.0",
-  "description": "Width controls for DSH — General Settings rows for the transcript column, the Settings dialog, and full-page content width, each with its own remembered preference.",
+  "version": "1.2.1",
+  "description": "Width controls for DSH — General Settings rows for the transcript column and the Settings dialog, plus a page presentation that shows Settings across the main area.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

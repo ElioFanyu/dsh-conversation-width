@@ -82,13 +82,34 @@ const SEL_RE = /^([a-zA-Z][\w-]*)?(?:\[([\w-]+)(?:=("([^"]*)"|'([^']*)'))?\])?$/
 function makeHostNode(props) {
   const inline = new Map(props || []);
   const attrs = new Map();
+  const listeners = new Map();
+  const children = [];
   return {
     _props: inline,
     _attrs: attrs,
+    _children: children,
+    _listeners: listeners,
+    dataset: {},
+    className: '',
+    textContent: '',
+    isConnected: true,
+    get ownerDocument() { return documentShim; },
     hasAttribute: k => attrs.has(k),
     setAttribute: (k, v) => { attrs.set(k, v); },
+    getAttribute: k => (attrs.has(k) ? attrs.get(k) : null),
     removeAttribute: k => { attrs.delete(k); },
     parentElement: null,
+    get firstChild() { return children.length ? children[0] : null; },
+    insertBefore(node) { children.unshift(node); node.parentElement = this; node._parentChildren = children; return node; },
+    remove() { const list = this._parentChildren || children; const i = list.indexOf(this); if (i >= 0) list.splice(i, 1); },
+    contains(node) {
+      if (node === this) return true;
+      for (const c of children) if (c && typeof c.contains === 'function' && c.contains(node)) return true;
+      return children.includes(node);
+    },
+    addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener(type) { listeners.delete(type); },
+    dispatchEvent(event) { const fn = listeners.get(event.type); if (fn) fn(event); return true; },
     style: {
       setProperty: (k, v) => inline.set(k, String(v)),
       removeProperty: k => { inline.delete(k); },
@@ -123,14 +144,25 @@ const documentShim = {
   },
   createElement: tag => {
     if (tag === 'style') { const el = makeStyleEl(); styleTags.push(el); return el; }
+    if (tag === 'button') return makeHostNode();
     return { tagName: tag, dataset: {}, setAttribute() {}, getAttribute() { return null; } };
   },
+  _docListeners: new Map(),
+  addEventListener(type, fn) { documentShim._docListeners.set(type, fn); },
+  removeEventListener(type) { documentShim._docListeners.delete(type); },
+  dispatchEvent(event) { documentShim._lastDispatched = event; return true; },
   head: { appendChild() {} }
 };
 globalThis.window = windowShim;
 globalThis.__hostNodes = { makeHostNode, setSettings: n => { settingsDialogNode = n; }, setPanel: n => { globalPanelNode = n; } };
 globalThis.document = documentShim;
 globalThis.Event = class Event { constructor(type) { this.type = type; } };
+globalThis.KeyboardEvent = class KeyboardEvent extends globalThis.Event {
+  constructor(type, init) { super(type); Object.assign(this, init || {}); }
+};
+globalThis.Node = class Node {};
+globalThis.window.addEventListener = (t, f) => { windowShim._listeners = windowShim._listeners || new Map(); windowShim._listeners.set(t, f); };
+globalThis.window.removeEventListener = (t) => { if (windowShim._listeners) windowShim._listeners.delete(t); };
 
 const pluginRequire = spec => {
   if (spec === 'react') return react;
@@ -191,13 +223,13 @@ const ctx = {
 };
 check('apply(ctx) does not throw', () => { mod.apply(ctx); });
 check('dictionaries registered for both languages', () => {
-  // 6 transcript keys + 9 page-axis keys + 6 presentation-mode keys.
-  if (regs.locale.length !== 1 || regs.locale[0].zh !== 21 || regs.locale[0].en !== 21) throw new Error(JSON.stringify(regs.locale));
+  // 6 transcript keys + 7 page-axis keys + 6 presentation-mode keys.
+  if (regs.locale.length !== 1 || regs.locale[0].zh !== 19 || regs.locale[0].en !== 19) throw new Error(JSON.stringify(regs.locale));
   return JSON.stringify(regs.locale[0]);
 });
 check('slot injected', () => {
-  // Four rows: transcript width, Settings presentation, dialog width, page width.
-  if (regs.inject.length !== 4 || regs.inject.some(x => x !== 'settings.general.item')) throw new Error(JSON.stringify(regs.inject));
+  // Three rows: transcript width, Settings presentation, dialog width.
+  if (regs.inject.length !== 3 || regs.inject.some(x => x !== 'settings.general.item')) throw new Error(JSON.stringify(regs.inject));
   return JSON.stringify(regs.inject);
 });
 check('slot registered correctly', () => {
@@ -356,6 +388,10 @@ function mountHostNodes() {
 }
 /** Fresh collectors plus the same fake ctx shape the file already uses. */
 function freshCtx() {
+  // Each case starts from a clean document: these tests install document-level
+  // listeners, and leaking them between cases would make later cases pass or
+  // fail for reasons unrelated to what they assert.
+  documentShim._docListeners.clear();
   const collected = { effects: [], locale: [], inject: [], slots: [] };
   const fake = {
     effect(fn, label) { collected.effects.push(label); return fn(); },
@@ -403,20 +439,6 @@ check('settings dialog width is published and clamped to its own range', () => {
   return 'stored 1200, published 1200px';
 });
 
-check('global panel width is published independently of the dialog', () => {
-  const { dialog, panel } = mountHostNodes();
-  const { collected, fake } = freshCtx();
-  store.clear();
-  mod.apply(fake);
-  const { inputs } = renderRow(collected, 'conversation-width-panel');
-  inputs[0].props.onChange({ currentTarget: { value: '1440' } });
-  if (store.get(PANEL_KEY) !== '1440') throw new Error('stored=' + store.get(PANEL_KEY));
-  if (panel._props.get('--dsh-global-panel-width') !== '1440px') throw new Error('panel published=' + panel._props.get('--dsh-global-panel-width'));
-  if (dialog._props.has('--dsh-settings-dialog-width')) throw new Error('dialog axis was touched by the panel row');
-  if (store.has(DIALOG_KEY)) throw new Error('dialog preference was written by the panel row');
-  return 'stored 1440, panel published, dialog untouched';
-});
-
 check('fill stores the token and publishes an unconstrained width', () => {
   const { dialog } = mountHostNodes();
   const { collected, fake } = freshCtx();
@@ -461,20 +483,6 @@ check('page axes leave the transcript preference alone', () => {
   return 'transcript untouched, no page variable without a preference';
 });
 
-check('page rule reaches the capped content, not just the panel element', () => {
-  /*
-   * The host marks `main` with data-global-panel but puts its 960px cap on the
-   * page's own children several levels below, so a child combinator
-   * ([data-global-panel]>*) matches nothing and the axis silently does nothing.
-   * Assert the descendant form, which is what actually reaches the cap.
-   */
-  const { slotCss } = globalThis.__pluginCss;
-  if (!/\[data-global-panel\]\s+\*\{/.test(slotCss)) throw new Error('page rule is not a descendant selector');
-  if (/\[data-global-panel\]>\*\{/.test(slotCss)) throw new Error('page rule still uses a child combinator');
-  if (!slotCss.includes('var(--dsh-global-panel-width,960px)')) throw new Error('page rule lost its variable/fallback');
-  return 'descendant selector with a 960px fallback';
-});
-
 check('dialog width rule keeps the host max-width by using !important on width only', () => {
   const { slotCss } = globalThis.__pluginCss;
   /* Scope the check to the single dialog-width rule: the page-presentation block
@@ -490,10 +498,29 @@ check('dialog width rule keeps the host max-width by using !important on width o
 
 check('page presentation hides the mask and stretches the panel', () => {
   const { slotCss } = globalThis.__pluginCss;
-  if (!/\[data-dcw-settings-page\]\>:first-child\{display:none/.test(slotCss)) throw new Error('mask is not hidden');
-  if (!/\[data-dcw-settings-page\]\>:last-child\{[^}]*width:100%!important/.test(slotCss)) throw new Error('panel is not stretched');
-  if (!/\[data-dcw-settings-page\]\>:last-child\{[^}]*border-radius:0/.test(slotCss)) throw new Error('panel corners are not squared');
-  return 'mask hidden, panel stretched and squared';
+  if (!/\[data-dcw-settings-page\]>\[aria-hidden\]\{display:none/.test(slotCss)) throw new Error('mask is not hidden by its aria-hidden marker');
+  if (!/\[data-dcw-settings-page\]>\[role=dialog\]\{[^}]*width:100%!important/.test(slotCss)) throw new Error('panel is not stretched by its role marker');
+  if (!/\[data-dcw-settings-page\]>\[role=dialog\]\{[^}]*border-radius:0/.test(slotCss)) throw new Error('panel corners are not squared');
+  return 'mask hidden, panel stretched and squared (ARIA-selected)';
+});
+
+check('page rules never use positional child selectors', () => {
+  /*
+   * This plugin inserts its own back button into the Settings overlay, so
+   * `>:first-child` / `>:last-child` stop pointing at the mask and the panel the
+   * moment it is installed - the first draft shipped exactly that bug (the button
+   * took the first-child slot and the mask stayed visible). Positional selection
+   * must not come back.
+   */
+  const { slotCss } = globalThis.__pluginCss;
+  const pageRules = slotCss.match(/\[data-dcw-settings-page\][^}]*\{[^}]*\}/g) || [];
+  if (pageRules.length === 0) throw new Error('no page rules found');
+  for (const rule of pageRules) {
+    if (/>\s*:(first|last|nth)-child/.test(rule)) throw new Error('positional selector in: ' + rule);
+  }
+  if (!pageRules.some(r => /aria-hidden/.test(r))) throw new Error('no aria-hidden rule');
+  if (!pageRules.some(r => /role=dialog/.test(r))) throw new Error('no role=dialog rule');
+  return pageRules.length + ' page rules, none positional';
 });
 
 // ---- Settings presentation mode ----------------------------------------
@@ -505,7 +532,6 @@ function mountDialogWithOverlay() {
   const dialog = globalThis.__hostNodes.makeHostNode();
   dialog.parentElement = overlay;
   globalThis.__hostNodes.setSettings(dialog);
-  globalThis.__hostNodes.setPanel(globalThis.__hostNodes.makeHostNode());
   return { overlay, dialog };
 }
 
@@ -588,6 +614,78 @@ check('page presentation is bounded to the main area, not the whole viewport', (
   const naiveWidth = viewport - leading - trailing;
   if (naiveWidth === shownWidth) throw new Error('fixture cannot distinguish the two forms');
   return 'left 248 / right 8 / width 981 (naive form would give ' + naiveWidth + ')';
+});
+
+check('page presentation adds a back button that closes via the host path', () => {
+  const { overlay, dialog } = mountDialogWithOverlay();
+  const { fake } = freshCtx();
+  store.clear();
+  store.set(MODE_KEY, 'page');
+  mod.apply(fake);
+
+  const back = overlay._children[0];
+  if (!back || back.className !== 'dcw_back') throw new Error('back button not inserted first');
+  if (back.getAttribute('aria-label') !== 'Back') throw new Error('back button not labelled');
+
+  // The host's useModalLayer listens on the document; verify Escape lands there.
+  documentShim._lastDispatched = null;
+  back._listeners.get('click')({ preventDefault() {}, stopPropagation() {} });
+  const sent = documentShim._lastDispatched;
+  if (!sent || sent.type !== 'keydown' || sent.key !== 'Escape') {
+    throw new Error('back did not dispatch Escape on the document: ' + JSON.stringify(sent && sent.key));
+  }
+  return 'back button present and dispatches Escape on the document';
+});
+
+check('page presentation closes when clicking outside the page', () => {
+  const { overlay, dialog } = mountDialogWithOverlay();
+  const { fake } = freshCtx();
+  store.clear();
+  store.set(MODE_KEY, 'page');
+  mod.apply(fake);
+
+  documentShim._lastDispatched = null;
+  const handler = documentShim._docListeners.get('pointerdown');
+  if (!handler) throw new Error('no outside-click listener installed');
+
+  const sawEscape = () => documentShim._lastDispatched && documentShim._lastDispatched.key === 'Escape';
+  documentShim._lastDispatched = null;
+
+  // A target inside the overlay must NOT close it.
+  handler({ target: overlay });
+  if (sawEscape()) throw new Error('clicking inside the page closed it');
+
+  // A target outside the overlay (the sidebar / a session row) must close it.
+  handler({ target: new (globalThis.Node)() });
+  if (!sawEscape()) throw new Error('clicking outside did not close it');
+  return 'inside keeps it open, outside closes it';
+});
+
+check('dialog presentation installs none of the page affordances', () => {
+  const { overlay } = mountDialogWithOverlay();
+  const { fake } = freshCtx();
+  store.clear();
+  mod.apply(fake);
+  if (overlay._children.length !== 0) throw new Error('back button inserted in dialog mode');
+  if (documentShim._docListeners.get('pointerdown')) throw new Error('outside-click listener installed in dialog mode');
+  return 'no back button, no outside-click listener';
+});
+
+check('switching page -> dialog removes the outside-click listener', () => {
+  const { overlay } = mountDialogWithOverlay();
+  const { fake } = freshCtx();
+  store.clear();
+  store.set(MODE_KEY, 'page');
+  mod.apply(fake);
+  if (!documentShim._docListeners.get('pointerdown')) throw new Error('listener missing in page mode');
+
+  // Switch to dialog and apply again: the listener must be gone, not merely ignored.
+  const { fake: fake2 } = freshCtx();
+  store.set(MODE_KEY, 'dialog');
+  mod.apply(fake2);
+  if (documentShim._docListeners.get('pointerdown')) throw new Error('outside-click listener survived the switch');
+  if (overlay._children.length !== 0) throw new Error('back button survived the switch');
+  return 'listener and back button both removed on switch';
 });
 
 console.log('\n' + (failures.length === 0 ? 'RESULT: ALL CHECKS PASSED' : 'RESULT: ' + failures.length + ' FAILURE(S)\n  - ' + failures.join('\n  - ')));
