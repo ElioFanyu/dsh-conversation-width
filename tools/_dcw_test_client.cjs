@@ -178,6 +178,8 @@ const documentShim = {
     return { tagName: tag, dataset: {}, setAttribute() {}, getAttribute() { return null; } };
   },
   _docListeners: new Map(),
+  _byId: new Map(),
+  getElementById(id) { return documentShim._byId.get(id) ?? null; },
   addEventListener(type, fn) { documentShim._docListeners.set(type, fn); },
   removeEventListener(type) { documentShim._docListeners.delete(type); },
   dispatchEvent(event) { documentShim._lastDispatched = event; return true; },
@@ -856,6 +858,55 @@ check('the title row clears the chrome by exactly its height', () => {
     throw new Error('title row adds an extra budget on top: ' + rule);
   }
   return 'title padding-top = chrome height (24px floor, no extra budget)';
+});
+
+check('no helper is defined twice (a later copy silently wins)', () => {
+  /*
+   * Twice now a duplicate definition shadowed the fixed version: the later copy
+   * wins silently, so a "fix" appeared to do nothing. Assert single definitions.
+   */
+  const names = ['findTitleRow', 'findHostCloseButton', 'closeSettings',
+                 'publishPageInset', 'installPageCloseAffordances', 'appFrame'];
+  const dupes = names.filter(n => (source.match(new RegExp('function ' + n + '\\(', 'g')) || []).length !== 1);
+  if (dupes.length) throw new Error('defined more than once: ' + dupes.join(', '));
+  return names.length + ' helpers, each defined once';
+});
+
+check('the title row is found by aria-labelledby, not by its text', () => {
+  /*
+   * The row's content comes from the settings.header slot, so it can be EMPTY when
+   * this runs. Requiring text made the lookup fail, the button then floated over
+   * the panel with no padding reserved, and it covered the window controls.
+   */
+  const { overlay, dialog } = mountDialogWithOverlay();
+  const { fake } = freshCtx();
+  store.clear();
+  store.set(MODE_KEY, 'page');
+
+  /* Model the real shape: the dialog names its title row, whose body is empty. */
+  dialog._attrs.set('aria-labelledby', 'tid');
+  const row = globalThis.__hostNodes.makeHostNode();
+  row._attrs.set('id', 'tid');
+  documentShim._byId.set('tid', row);
+  row.textContent = '';
+  dialog._children.unshift(row);
+  dialog.querySelector = sel => (sel === '#tid' ? row : null);
+
+  mod.apply(fake);
+  if (!row.classList.contains('dcw_titleRow')) {
+    throw new Error('title row not recognised when its text is empty');
+  }
+  if (overlay.hasAttribute('data-dcw-no-title')) throw new Error('fallback marker set despite finding the row');
+  return 'empty title row still recognised via aria-labelledby';
+});
+
+check('an unidentified title row still clears the chrome', () => {
+  /* With no nameable row the button must not sit over the window controls. */
+  const { slotCss } = globalThis.__pluginCss;
+  if (!/\[data-dcw-no-title\][^{]*\{[^}]*padding-top:max\(24px,\s*var\(--dsh-frame-top-clearance/.test(slotCss)) {
+    throw new Error('no fallback clearance rule');
+  }
+  return 'fallback moves the clearance onto the panel';
 });
 
 console.log('\n' + (failures.length === 0 ? 'RESULT: ALL CHECKS PASSED' : 'RESULT: ' + failures.length + ' FAILURE(S)\n  - ' + failures.join('\n  - ')));
