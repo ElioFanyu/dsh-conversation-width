@@ -130,6 +130,21 @@ assertMatch('global panels still cap content at 960px', read('dsh-client-ui-plug
   new RegExp(`max-width\\s*:\\s*960px`));
 
 say('');
+/*
+ * Page presentation depends on the Settings overlay being exactly two children:
+ * the mask first, the panel last. `>:first-child` / `>:last-child` are how the
+ * mask is hidden and the panel stretched, so if the host inserts another child
+ * the presentation would silently target the wrong element.
+ */
+assertMatch('the Settings overlay still renders a mask before the panel', generalClient)(
+  /* The overlay's mask: className bound to the `mask` class and marked aria-hidden.
+   * These two are what make `>:first-child` the mask and `>:last-child` the panel,
+   * so page presentation targets the right element. */
+  new RegExp(`SettingsRoot_module_css_default\\.mask,\\s*${Q}aria-hidden${Q}`));
+assertMatch('the Settings panel is still the dialog element', generalClient)(
+  /* The host writes the key unquoted (`role:`dialog``), so accept both forms. */
+  new RegExp(`(?:^|[,{])\\s*${Q}?role${Q}?\\s*:\\s*${Q}dialog${Q}`));
+
 say('== the clamp the row mirrors ==');
 const conv = convClient || '';
 const num = (re) => { const m = conv.match(re); return m === null ? null : Number(m[1]); };
@@ -186,9 +201,11 @@ if (builtin.length === 0) {
 } else {
   builtin.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   say('   ' + builtin.map((h) => `${h.order} ${h.id}`).join(' | '));
-  const collided = builtin.filter((h) => h.order === ORDER);
-  for (const c of collided) fail(`built-in row "${c.id}" also uses order ${ORDER} (${c.source})`);
-  if (collided.length === 0) ok(`no built-in registration uses order ${ORDER}`);
+  /* Every order this plugin claims, so a new host row cannot silently land on one. */
+  const CLAIMED_ORDERS = [18, 19, 19.5, 21];
+  const collided = builtin.filter((h) => CLAIMED_ORDERS.includes(h.order));
+  for (const c of collided) fail(`built-in row "${c.id}" also uses order ${c.order} (${c.source})`);
+  if (collided.length === 0) ok(`no built-in registration uses ${CLAIMED_ORDERS.join(', ')}`);
 }
 
 say('');

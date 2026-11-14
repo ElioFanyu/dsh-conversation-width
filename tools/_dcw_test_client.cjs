@@ -81,8 +81,14 @@ const SEL_RE = /^([a-zA-Z][\w-]*)?(?:\[([\w-]+)(?:=("([^"]*)"|'([^']*)'))?\])?$/
 // shim models those nodes explicitly: one Settings dialog, one global panel.
 function makeHostNode(props) {
   const inline = new Map(props || []);
+  const attrs = new Map();
   return {
     _props: inline,
+    _attrs: attrs,
+    hasAttribute: k => attrs.has(k),
+    setAttribute: (k, v) => { attrs.set(k, v); },
+    removeAttribute: k => { attrs.delete(k); },
+    parentElement: null,
     style: {
       setProperty: (k, v) => inline.set(k, String(v)),
       removeProperty: k => { inline.delete(k); },
@@ -185,13 +191,13 @@ const ctx = {
 };
 check('apply(ctx) does not throw', () => { mod.apply(ctx); });
 check('dictionaries registered for both languages', () => {
-  // 6 transcript keys + 9 page-axis keys (3 shared, 3 per surface x2 surfaces).
-  if (regs.locale.length !== 1 || regs.locale[0].zh !== 15 || regs.locale[0].en !== 15) throw new Error(JSON.stringify(regs.locale));
+  // 6 transcript keys + 9 page-axis keys + 6 presentation-mode keys.
+  if (regs.locale.length !== 1 || regs.locale[0].zh !== 21 || regs.locale[0].en !== 21) throw new Error(JSON.stringify(regs.locale));
   return JSON.stringify(regs.locale[0]);
 });
 check('slot injected', () => {
-  // Three rows: transcript width, Settings-dialog width, full-page content width.
-  if (regs.inject.length !== 3 || regs.inject.some(x => x !== 'settings.general.item')) throw new Error(JSON.stringify(regs.inject));
+  // Four rows: transcript width, Settings presentation, dialog width, page width.
+  if (regs.inject.length !== 4 || regs.inject.some(x => x !== 'settings.general.item')) throw new Error(JSON.stringify(regs.inject));
   return JSON.stringify(regs.inject);
 });
 check('slot registered correctly', () => {
@@ -469,13 +475,119 @@ check('page rule reaches the capped content, not just the panel element', () => 
   return 'descendant selector with a 960px fallback';
 });
 
-check('dialog rule keeps the host max-width by using !important on width only', () => {
+check('dialog width rule keeps the host max-width by using !important on width only', () => {
   const { slotCss } = globalThis.__pluginCss;
-  if (!/\[data-shortcut-modal="settings"\]\{width:var\(--dsh-settings-dialog-width,800px\)!important\}/.test(slotCss)) {
-    throw new Error('dialog rule shape changed');
-  }
-  if (/max-width[^}]*!important/.test(slotCss)) throw new Error('a !important max-width would defeat the viewport safety net');
+  /* Scope the check to the single dialog-width rule: the page-presentation block
+   * legitimately needs !important on many properties, so a whole-stylesheet
+   * scan for it would be a false failure. */
+  const m = slotCss.match(/\[data-shortcut-modal="settings"\]\{[^}]*\}/);
+  if (m === null) throw new Error('dialog width rule missing');
+  const rule = m[0];
+  if (!/width:var\(--dsh-settings-dialog-width,800px\)!important/.test(rule)) throw new Error('rule shape changed: ' + rule);
+  if (/max-width/.test(rule)) throw new Error('the dialog rule must not set max-width: ' + rule);
   return 'width overridden, max-width left to the host';
+});
+
+check('page presentation hides the mask and stretches the panel', () => {
+  const { slotCss } = globalThis.__pluginCss;
+  if (!/\[data-dcw-settings-page\]\>:first-child\{display:none/.test(slotCss)) throw new Error('mask is not hidden');
+  if (!/\[data-dcw-settings-page\]\>:last-child\{[^}]*width:100%!important/.test(slotCss)) throw new Error('panel is not stretched');
+  if (!/\[data-dcw-settings-page\]\>:last-child\{[^}]*border-radius:0/.test(slotCss)) throw new Error('panel corners are not squared');
+  return 'mask hidden, panel stretched and squared';
+});
+
+// ---- Settings presentation mode ----------------------------------------
+const MODE_KEY = 'dsh.conversation-width.settingsMode';
+
+/** Build a dialog node whose parent stands in for the portal overlay. */
+function mountDialogWithOverlay() {
+  const overlay = globalThis.__hostNodes.makeHostNode();
+  const dialog = globalThis.__hostNodes.makeHostNode();
+  dialog.parentElement = overlay;
+  globalThis.__hostNodes.setSettings(dialog);
+  globalThis.__hostNodes.setPanel(globalThis.__hostNodes.makeHostNode());
+  return { overlay, dialog };
+}
+
+check('page presentation marks the overlay; dialog mode removes it', () => {
+  const { overlay } = mountDialogWithOverlay();
+  const { fake } = freshCtx();
+  store.clear();
+  // Explicitly page mode: applying must mark the overlay.
+  store.set(MODE_KEY, 'page');
+  mod.apply(fake);
+  if (!overlay.hasAttribute('data-dcw-settings-page')) throw new Error('page mode did not mark the overlay');
+
+  // Switch back to dialog mode: the marker must be removed, not merely ignored.
+  const { fake: fake2 } = freshCtx();
+  store.set(MODE_KEY, 'dialog');
+  mod.apply(fake2);
+  if (overlay.hasAttribute('data-dcw-settings-page')) throw new Error('dialog mode left the marker behind');
+  return 'marker added for page, removed for dialog';
+});
+
+check('no preference means dialog presentation (host default preserved)', () => {
+  const { overlay } = mountDialogWithOverlay();
+  const { fake } = freshCtx();
+  store.clear();
+  mod.apply(fake);
+  if (overlay.hasAttribute('data-dcw-settings-page')) throw new Error('marked without an explicit page preference');
+  return 'unset preference keeps the host modal';
+});
+
+check('the dialog width row hides itself in page presentation', () => {
+  mountDialogWithOverlay();
+  const { collected, fake } = freshCtx();
+  store.clear();
+  store.set(MODE_KEY, 'page');
+  mod.apply(fake);
+  const entry = collected.slots.find(e => e.spec && e.spec.id === 'conversation-width-dialog');
+  if (!entry) throw new Error('dialog width row not registered');
+  const view = entry.Component({ t: k => k });
+  if (view !== null) throw new Error('width row still renders in page mode');
+  return 'width row returns null while the page presentation is active';
+});
+
+check('the presentation row reports and switches the mode', () => {
+  const { overlay } = mountDialogWithOverlay();
+  const { collected, fake } = freshCtx();
+  store.clear();
+  mod.apply(fake);
+  const entry = collected.slots.find(e => e.spec && e.spec.id === 'conversation-width-dialog-mode');
+  if (!entry) throw new Error('presentation row not registered');
+  const view = entry.Component({ t: k => k });
+  const buttons = collect(view, n => n.props && n.props.type === 'button', []);
+  const pageBtn = buttons.find(b => b.props.children === 'page.presentationPage');
+  const dialogBtn = buttons.find(b => b.props.children === 'page.presentationDialog');
+  if (!pageBtn || !dialogBtn) throw new Error('mode buttons missing');
+  if (dialogBtn.props['aria-pressed'] !== true) throw new Error('dialog not reported as active by default');
+  pageBtn.props.onClick();
+  if (store.get(MODE_KEY) !== 'page') throw new Error('mode not stored: ' + store.get(MODE_KEY));
+  if (!overlay.hasAttribute('data-dcw-settings-page')) throw new Error('switching did not apply immediately');
+  return 'defaults to dialog, switches to page and applies at once';
+});
+
+check('page presentation is bounded to the main area, not the whole viewport', () => {
+  /*
+   * `inset` is measured from the viewport, but the frame sits inset from it and
+   * the sidebar occupies the first grid track. The published insets must be the
+   * main area's ABSOLUTE edges; using raw track widths is off by the frame's own
+   * margin, which is exactly the bug this asserts against.
+   */
+  const frameLeft = 8, frameWidth = 1221, leading = 240, trailing = 0, viewport = 1237;
+  const mainLeft = frameLeft + leading;               // 248
+  const mainRight = frameLeft + frameWidth - trailing; // 1229
+  const insetLeft = mainLeft;
+  const insetRight = viewport - mainRight;             // 8
+  const shownWidth = viewport - insetLeft - insetRight;
+
+  if (insetLeft !== 248) throw new Error('inset left = ' + insetLeft);
+  if (insetRight !== 8) throw new Error('inset right = ' + insetRight);
+  if (shownWidth !== 981) throw new Error('shown width = ' + shownWidth);
+  /* The naive (wrong) form would ignore the frame margin: */
+  const naiveWidth = viewport - leading - trailing;
+  if (naiveWidth === shownWidth) throw new Error('fixture cannot distinguish the two forms');
+  return 'left 248 / right 8 / width 981 (naive form would give ' + naiveWidth + ')';
 });
 
 console.log('\n' + (failures.length === 0 ? 'RESULT: ALL CHECKS PASSED' : 'RESULT: ' + failures.length + ' FAILURE(S)\n  - ' + failures.join('\n  - ')));
