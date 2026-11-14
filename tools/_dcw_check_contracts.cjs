@@ -105,6 +105,30 @@ assertMatch('the published width variable is unchanged', convClient)(
 assertMatch('the width axis clamps through the user variable', convClient)(
   new RegExp(`--dsh-chat-content-width\\s*:\\s*var\\(\\s*--dsh-chat-user-width`));
 
+/*
+ * The two page axes target host chrome rather than a slot, so each one needs an
+ * anchor that is semantic (declared for behaviour, not styling) and therefore
+ * survives a re-minified bundle whose class names are content hashes. If an
+ * anchor ever disappears, the axis silently stops applying - which is invisible
+ * in the browser - so assert all three here.
+ */
+say('');
+say('== the page-width anchors ==');
+const layoutClient = read('dsh-client-ui-layout', 'lib/client.js');
+assertMatch('global panels are marked [data-global-panel]', layoutClient)(
+  new RegExp(`data-global-panel`));
+assertMatch('the Settings dialog is marked data-shortcut-modal=settings', generalClient)(
+  /* The bundle writes the key as \"data-shortcut-modal\":`settings` (the inner
+   * quotes are escaped because it sits in a template literal), so match the
+   * attribute name and value tolerantly of both quoting and escaping. */
+  new RegExp(`data-shortcut-modal[\\\\"'\`]*\\s*:\\s*[\\\\"'\`]+settings`));
+assertMatch('the Settings dialog still defaults to width:800px', generalClient)(
+  /width\s*:\s*800px/);
+assertMatch('the dialog keeps its viewport max-width safety net', generalClient)(
+  new RegExp(`max-width\\s*:\\s*calc\\(\\s*100vw\\s*-\\s*48px\\s*\\)`));
+assertMatch('global panels still cap content at 960px', read('dsh-client-ui-plugin-manager', 'lib/client.js'))(
+  new RegExp(`max-width\\s*:\\s*960px`));
+
 say('');
 say('== the clamp the row mirrors ==');
 const conv = convClient || '';

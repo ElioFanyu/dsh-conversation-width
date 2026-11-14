@@ -1,7 +1,7 @@
 {
   "name": "dsh-conversation-width",
-  "version": "1.0.3",
-  "description": "Conversation display-area width control for DSH — adds a General Settings row that sets the transcript column width, sharing one preference with the built-in drag handles.",
+  "version": "1.1.0",
+  "description": "Width controls for DSH — General Settings rows for the transcript column, the Settings dialog, and full-page content width, each with its own remembered preference.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -22,7 +22,8 @@
         "0.2.1-rc.3": "compatible",
         "0.2.1-rc.5": "compatible",
         "0.2.2-rc.1": "compatible",
-        "0.2.2-rc.2": "compatible"
+        "0.2.2-rc.2": "compatible",
+        "0.2.2-rc.3": "compatible"
       }
     },
     "bundle": {

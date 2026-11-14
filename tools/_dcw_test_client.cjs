@@ -77,10 +77,26 @@ let conversationBodies = [];
 // shim must do the same or it cannot reproduce the defect this harness exists
 // to catch. Supported shapes: tag, tag[attr], tag[attr="v"], tag[attr='v'].
 const SEL_RE = /^([a-zA-Z][\w-]*)?(?:\[([\w-]+)(?:=("([^"]*)"|'([^']*)'))?\])?$/;
+// The two page-width axes act on host chrome the plugin does not render, so the
+// shim models those nodes explicitly: one Settings dialog, one global panel.
+function makeHostNode(props) {
+  const inline = new Map(props || []);
+  return {
+    _props: inline,
+    style: {
+      setProperty: (k, v) => inline.set(k, String(v)),
+      removeProperty: k => { inline.delete(k); },
+      getPropertyValue: k => (inline.has(k) ? inline.get(k) : '')
+    }
+  };
+}
+let settingsDialogNode = null;
+let globalPanelNode = null;
 const documentShim = {
   querySelectorAll: sel => {
     if (sel === 'style[data-plugin-css]') return styleTags;
     if (sel === '[data-conversation-content]') return conversationBodies;
+    if (sel === '[data-global-panel]') return globalPanelNode === null ? [] : [globalPanelNode];
     return [];
   },
   querySelector: sel => {
@@ -89,6 +105,7 @@ const documentShim = {
       throw new SyntaxError("Failed to execute 'querySelector' on 'Document': '" + sel + "' is not a valid selector.");
     }
     const tag = m[1], attr = m[2], want = m[4] !== undefined ? m[4] : m[5];
+    if (sel === '[data-shortcut-modal="settings"]') return settingsDialogNode;
     for (const el of styleTags) {
       if (tag !== undefined && el.tagName !== tag) continue;
       if (attr === undefined) return el;
@@ -105,6 +122,7 @@ const documentShim = {
   head: { appendChild() {} }
 };
 globalThis.window = windowShim;
+globalThis.__hostNodes = { makeHostNode, setSettings: n => { settingsDialogNode = n; }, setPanel: n => { globalPanelNode = n; } };
 globalThis.document = documentShim;
 globalThis.Event = class Event { constructor(type) { this.type = type; } };
 
@@ -144,6 +162,7 @@ check('tag carries data-plugin-css', () => {
   if (got !== want) throw new Error('attr=' + JSON.stringify(got) + ' want=' + JSON.stringify(want));
   return got;
 });
+globalThis.__pluginCss = { slotCss: styleTags[0].textContent };
 check('tag carries the css text', () => { if (!styleTags[0].textContent.includes('.dcw_row')) throw new Error('css missing'); return styleTags[0].textContent.length + ' chars'; });
 check('a SECOND load does not duplicate the tag', () => {
   new Function('window', 'document', 'require', source)(windowShim, documentShim, pluginRequire);
@@ -165,8 +184,16 @@ const ctx = {
   }
 };
 check('apply(ctx) does not throw', () => { mod.apply(ctx); });
-check('dictionaries registered for both languages', () => { if (regs.locale.length !== 1 || regs.locale[0].zh !== 6 || regs.locale[0].en !== 6) throw new Error(JSON.stringify(regs.locale)); return JSON.stringify(regs.locale[0]); });
-check('slot injected', () => { if (JSON.stringify(regs.inject) !== '["settings.general.item"]') throw new Error(JSON.stringify(regs.inject)); return JSON.stringify(regs.inject); });
+check('dictionaries registered for both languages', () => {
+  // 6 transcript keys + 9 page-axis keys (3 shared, 3 per surface x2 surfaces).
+  if (regs.locale.length !== 1 || regs.locale[0].zh !== 15 || regs.locale[0].en !== 15) throw new Error(JSON.stringify(regs.locale));
+  return JSON.stringify(regs.locale[0]);
+});
+check('slot injected', () => {
+  // Three rows: transcript width, Settings-dialog width, full-page content width.
+  if (regs.inject.length !== 3 || regs.inject.some(x => x !== 'settings.general.item')) throw new Error(JSON.stringify(regs.inject));
+  return JSON.stringify(regs.inject);
+});
 check('slot registered correctly', () => {
   const r = regs.slots[0];
   if (!r) throw new Error('nothing registered');
@@ -305,6 +332,150 @@ check('reset clears the preference and removes the published variable', () => {
   if (store.has('dsh.conversation.contentWidth')) throw new Error('preference not cleared');
   if (conversationBodies[0]._props.has('--dsh-chat-user-width')) throw new Error('variable still published');
   return 'cleared, --dsh-chat-user-width removed';
+});
+
+// ---- the two page-width axes -------------------------------------------
+// These act on host chrome the plugin does not render, so each case builds the
+// node the host would have mounted, drives the row, and reads the published
+// custom property back.
+const DIALOG_KEY = 'dsh.conversation-width.settingsDialog';
+const PANEL_KEY = 'dsh.conversation-width.globalPanel';
+
+function mountHostNodes() {
+  const dialog = globalThis.__hostNodes.makeHostNode();
+  const panel = globalThis.__hostNodes.makeHostNode();
+  globalThis.__hostNodes.setSettings(dialog);
+  globalThis.__hostNodes.setPanel(panel);
+  return { dialog, panel };
+}
+/** Fresh collectors plus the same fake ctx shape the file already uses. */
+function freshCtx() {
+  const collected = { effects: [], locale: [], inject: [], slots: [] };
+  const fake = {
+    effect(fn, label) { collected.effects.push(label); return fn(); },
+    locale: { register(ns, dict) { collected.locale.push({ ns, zh: Object.keys(dict.zh).length, en: Object.keys(dict.en).length }); return () => {}; } },
+    slots: {
+      inject(name, cb) { collected.inject.push(name); cb(); },
+      register(spec, Component) { collected.slots.push({ spec, Component }); return () => {}; }
+    }
+  };
+  return { collected, fake };
+}
+/** Every element in a returned React tree matching a predicate. */
+function collect(node, pred, out) {
+  if (!node || typeof node !== 'object') return out;
+  if (Array.isArray(node)) { for (const n of node) collect(n, pred, out); return out; }
+  if (node.props) {
+    if (pred(node)) out.push(node);
+    collect(node.props.children, pred, out);
+  }
+  return out;
+}
+/** Render one registered row and return its inputs/buttons. */
+function renderRow(collected, id) {
+  const entry = collected.slots.find(e => e.spec && e.spec.id === id);
+  if (!entry) throw new Error('row not registered: ' + id);
+  const view = entry.Component({ t: k => k });
+  return {
+    inputs: collect(view, n => n.props && n.props.type === 'range', []),
+    numbers: collect(view, n => n.props && n.props.type === 'number', []),
+    buttons: collect(view, n => n.props && n.props.type === 'button', [])
+  };
+}
+
+check('settings dialog width is published and clamped to its own range', () => {
+  const { dialog } = mountHostNodes();
+  const { collected, fake } = freshCtx();
+  store.clear();
+  mod.apply(fake);
+  // Drive the row through its registered component.
+  const { inputs } = renderRow(collected, 'conversation-width-dialog');
+  if (!inputs.length) throw new Error('no range input');
+  inputs[0].props.onChange({ currentTarget: { value: '1200' } });
+  if (store.get(DIALOG_KEY) !== '1200') throw new Error('stored=' + store.get(DIALOG_KEY));
+  if (dialog._props.get('--dsh-settings-dialog-width') !== '1200px') throw new Error('published=' + dialog._props.get('--dsh-settings-dialog-width'));
+  return 'stored 1200, published 1200px';
+});
+
+check('global panel width is published independently of the dialog', () => {
+  const { dialog, panel } = mountHostNodes();
+  const { collected, fake } = freshCtx();
+  store.clear();
+  mod.apply(fake);
+  const { inputs } = renderRow(collected, 'conversation-width-panel');
+  inputs[0].props.onChange({ currentTarget: { value: '1440' } });
+  if (store.get(PANEL_KEY) !== '1440') throw new Error('stored=' + store.get(PANEL_KEY));
+  if (panel._props.get('--dsh-global-panel-width') !== '1440px') throw new Error('panel published=' + panel._props.get('--dsh-global-panel-width'));
+  if (dialog._props.has('--dsh-settings-dialog-width')) throw new Error('dialog axis was touched by the panel row');
+  if (store.has(DIALOG_KEY)) throw new Error('dialog preference was written by the panel row');
+  return 'stored 1440, panel published, dialog untouched';
+});
+
+check('fill stores the token and publishes an unconstrained width', () => {
+  const { dialog } = mountHostNodes();
+  const { collected, fake } = freshCtx();
+  store.clear();
+  mod.apply(fake);
+  const { buttons } = renderRow(collected, 'conversation-width-dialog');
+  const fill = buttons.find(b => b.props.children === 'page.fill');
+  if (!fill) throw new Error('no fill button');
+  fill.props.onClick();
+  if (store.get(DIALOG_KEY) !== 'fill') throw new Error('stored=' + store.get(DIALOG_KEY));
+  const published = dialog._props.get('--dsh-settings-dialog-width');
+  if (published !== '100000px') throw new Error('published=' + published);
+  return 'stored "fill", published 100000px';
+});
+
+check('resetting a page axis removes the variable so the host default returns', () => {
+  const { dialog } = mountHostNodes();
+  const { collected, fake } = freshCtx();
+  store.clear();
+  store.set(DIALOG_KEY, '1200');
+  mod.apply(fake);
+  if (dialog._props.get('--dsh-settings-dialog-width') !== '1200px') throw new Error('not applied before reset');
+  const { buttons } = renderRow(collected, 'conversation-width-dialog');
+  const reset = buttons.find(b => b.props.className === 'dcw_reset');
+  if (!reset) throw new Error('no reset button');
+  reset.props.onClick();
+  if (store.has(DIALOG_KEY)) throw new Error('preference not cleared');
+  if (dialog._props.has('--dsh-settings-dialog-width')) throw new Error('variable still published');
+  return 'cleared, host default restored';
+});
+
+check('page axes leave the transcript preference alone', () => {
+  const { dialog, panel } = mountHostNodes();
+  const { fake } = freshCtx();
+  store.clear();
+  store.set('dsh.conversation.contentWidth', '1280');
+  mod.apply(fake);
+  if (store.get('dsh.conversation.contentWidth') !== '1280') throw new Error('transcript preference changed');
+  if (store.has(DIALOG_KEY) || store.has(PANEL_KEY)) throw new Error('page axes wrote without a preference');
+  if (dialog._props.has('--dsh-settings-dialog-width')) throw new Error('dialog variable published without a preference');
+  if (panel._props.has('--dsh-global-panel-width')) throw new Error('panel variable published without a preference');
+  return 'transcript untouched, no page variable without a preference';
+});
+
+check('page rule reaches the capped content, not just the panel element', () => {
+  /*
+   * The host marks `main` with data-global-panel but puts its 960px cap on the
+   * page's own children several levels below, so a child combinator
+   * ([data-global-panel]>*) matches nothing and the axis silently does nothing.
+   * Assert the descendant form, which is what actually reaches the cap.
+   */
+  const { slotCss } = globalThis.__pluginCss;
+  if (!/\[data-global-panel\]\s+\*\{/.test(slotCss)) throw new Error('page rule is not a descendant selector');
+  if (/\[data-global-panel\]>\*\{/.test(slotCss)) throw new Error('page rule still uses a child combinator');
+  if (!slotCss.includes('var(--dsh-global-panel-width,960px)')) throw new Error('page rule lost its variable/fallback');
+  return 'descendant selector with a 960px fallback';
+});
+
+check('dialog rule keeps the host max-width by using !important on width only', () => {
+  const { slotCss } = globalThis.__pluginCss;
+  if (!/\[data-shortcut-modal="settings"\]\{width:var\(--dsh-settings-dialog-width,800px\)!important\}/.test(slotCss)) {
+    throw new Error('dialog rule shape changed');
+  }
+  if (/max-width[^}]*!important/.test(slotCss)) throw new Error('a !important max-width would defeat the viewport safety net');
+  return 'width overridden, max-width left to the host';
 });
 
 console.log('\n' + (failures.length === 0 ? 'RESULT: ALL CHECKS PASSED' : 'RESULT: ' + failures.length + ' FAILURE(S)\n  - ' + failures.join('\n  - ')));

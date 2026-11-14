@@ -1,8 +1,14 @@
 # dsh-conversation-width
 
-一个 DSH Web 插件，在 **设置 → 通用** 中增加「**对话显示区域宽度**」一项。
+一个 DSH Web 插件，在 **设置 → 通用** 中增加三项宽度控制：
 
-全新安装时，中间对话栏被限制在 920px，在宽屏显示器上显得拥挤。本插件把该栏位真实存在的宽度偏好暴露到设置页，从此不必只靠拖拽对话区边缘来调宽度。
+| 设置项 | 控制什么 | 宿主默认 |
+| --- | --- | --- |
+| 对话显示区域宽度 | 中间对话栏（与会话自带的拖拽手柄共用同一个偏好） | 自适应，上限 920px |
+| 设置窗口宽度 | 「设置」弹窗本身 | 800px |
+| 整页视图内容宽度 | 从侧栏打开的整页（插件、技能…）的内容栏 | 960px 居中 |
+
+全新安装时，中间对话栏被限制在 920px、设置弹窗固定 800px、整页内容固定 960px 居中；在宽屏显示器上这些都很浪费空间。本插件把三者都暴露到设置页，每项独立记忆、互不干扰。
 
 ## 它做了什么
 
@@ -34,21 +40,62 @@ localStorage["dsh.conversation.contentWidth"]   // 单位 px，由拖拽手柄�
 
 因为超过约 1100–1300px 之后，一行散文就不再舒适可读了——眼睛会跟丢行尾，所以真正有用的区间其实远在 1600 之内。留到 1600 是为了照顾特别宽的显示器、以及偏好宽栏位的用户；而布局自己的 `columnWidth - 176` clamp 始终是任意给定窗口下的硬上限。
 
+## 另外两个宽度轴（1.1.0 起）
+
+对话栏之外，插件还控制两块**宿主界面**的宽度。它们与对话栏偏好完全独立，各有各的 key 和控件。
+
+### 设置弹窗宽度
+
+宿主把设置弹窗写死为 `width:800px`，并且 `createPortal(..., document.body)` 渲染——也就是说它**不在**主面板里，拿不到主面板上的任何 CSS 变量。插件因此按它自己的锚点 `[data-shortcut-modal="settings"]` 定位，发布 `--dsh-settings-dialog-width`。
+
+```css
+[data-shortcut-modal="settings"]{width:var(--dsh-settings-dialog-width,800px)!important}
+```
+
+`!important` 只加在 `width` 上，**故意不动 `max-width`**：宿主那条 `max-width:calc(100vw - 48px)` 是窗口变小时的兜底，覆盖它会在大窗口设了 1600px 之后、把窗口缩小时让弹窗溢出屏幕。实测：窗口宽度 1204px 时，即使偏好是 1600px，弹窗仍被压到 1204px。
+
+### 整页视图内容宽度
+
+侧栏的「插件」「技能」这类整页由 `main` 槽渲染，内容被限制在 `max-width:960px` 并居中，于是两侧留下大片空白。
+
+宿主在 `dsh-client-ui-layout` 里用 `data-global-panel` 标记「当前 `main` 由面板而非会话占用」，插件据此定位：
+
+```css
+[data-global-panel] *{max-width:var(--dsh-global-panel-width,960px)}
+```
+
+**必须是后代选择器，不能是子选择器。** `data-global-panel` 打在 `main` 面板上，而 960px 的上限挂在它内部好几层的页面子元素上，`[data-global-panel]>*` 一条都匹配不到——这条曾经真的写错过一次，表现是「变量设了、测量值纹丝不动」。测试里专门有一条断言锁住这一点。
+
+因为会话视图没有 `data-global-panel`，这条规则不会碰到对话栏，两者天然隔离。
+
+### 共同的交互
+
+两个轴都有滑块、数字框、预设和「铺满」，都支持「恢复默认」。铺满不是删掉 `max-width`，而是发布一个极大的像素值（`100000px`），这样消费规则里的 `max-width` 形状保持不变，宿主自己的外层约束依然生效。
+
+两个轴都不通过 slot 渲染任何宿主 chrome：它们只写 CSS 变量，然后由上面两条规则消费。设置弹窗的开关、整页的挂载都是宿主行为，所以插件用一个 `MutationObserver`（`requestAnimationFrame` 节流）在 DOM 变化后重新发布，而不是只在启动时写一次。
+
 ## 兼容性
 
-已在 **DSH 0.2.2-rc.2** 的宿主上实测通过，同时兼容 0.2.2-rc.1、0.2.1-rc.5、0.2.1-rc.3、0.2.1-rc.2、0.2.0-rc.2。
+已在 **DSH 0.2.2-rc.3** 的宿主上实测通过，同时兼容 0.2.2-rc.2、0.2.2-rc.1、0.2.1-rc.5、0.2.1-rc.3、0.2.1-rc.2、0.2.0-rc.2。
 
-插件依赖的宿主契约共七项，逐项都对着宿主源码核过：
+插件依赖的宿主契约共十二项，逐项都对着宿主源码核过：
 
-| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 | 0.2.1-rc.5 | 0.2.2-rc.1 | 0.2.2-rc.2 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 设置项插槽 `settings.general.item`（list 槽，按 `order` 排序） | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 契约 | 位置 | 0.2.0-rc.2 | 0.2.1-rc.3 | 0.2.1-rc.5 | 0.2.2-rc.1 | 0.2.2-rc.2 | 0.2.2-rc.3 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 客户端插件判定：`dsh.client.platform === "web"` + `exports["./client"]` | `dsh-client-modules` 的 `resolveMeta` / `clientExportOf` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 设置项插槽 `settings.general.item`（list 槽，按 `order` 排序） | `dsh-client-ui-settings-general` 的 `renderSlot` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 注册形态 `{ name, id, order, locale }` | 同上，另有 `dsh-client-ui-chat` 等多处 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `locale.register(ns, { zh, en })` | `dsh-client-locale` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 宽度偏好 key `dsh.conversation.contentWidth` | `dsh-client-ui-conversation` 的 `WIDTH_PREF_KEY` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| clamp 常量 `CONTENT_MIN = 640` / `CONTENT_EDGE_BUDGET = 176` | 同上 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 宽度轴落点 `[data-conversation-content]` 的父元素 + `--dsh-chat-user-width` | 同上 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 整页面板标记 `data-global-panel` | `dsh-client-ui-layout` 的 `MainPanel` | — | — | — | — | — | ✓ |
+| 设置弹窗锚点 `data-shortcut-modal="settings"` | `dsh-client-ui-settings-general` 的 `SettingsPanel` | — | — | — | — | — | ✓ |
+| 设置弹窗默认宽度 `width:800px` | 同上（`SettingsRoot.module.css`） | — | — | — | — | — | ✓ |
+| 设置弹窗兜底 `max-width:calc(100vw - 48px)` | 同上 | — | — | — | — | — | ✓ |
+| 整页内容上限 `max-width:960px` | `dsh-client-ui-plugin-manager` 的页面 CSS | — | — | — | — | — | ✓ |
+
+表格里的 `—` 表示**没有在该版本上核实过**，不是「不兼容」。前七项契约在各自列出的版本上都逐字核过；后五项（页面宽度锚点）是 1.1.0 新增的依赖，只在 **0.2.2-rc.3** 上核实过，所以不往前追溯打勾。
 
 `engines.dsh` 已声明为 `>=0.2.0-rc.2 <0.3.0`，宿主自己的 `evaluatePluginCompatibility()` 会读它（拿 `^0.3.0` 去试会得到 `REJECTED`，说明这个字段真的在生效）。
 
