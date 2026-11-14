@@ -1,6 +1,6 @@
 {
   "name": "dsh-conversation-width",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Width controls for DSH — General Settings rows for the transcript column and the Settings dialog, plus a page presentation that shows Settings across the main area.",
   "type": "module",
   "main": "lib/index.js",

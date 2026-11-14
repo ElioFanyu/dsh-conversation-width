@@ -106,6 +106,10 @@ function makeHostNode(props) {
     tagName: 'DIV',
     isConnected: true,
     get ownerDocument() { return documentShim; },
+    /* Geometry: the frame sits at the viewport origin in these fixtures. */
+    getBoundingClientRect() {
+      return { top: 0, left: 0, right: 1237, bottom: 800, width: 1237, height: 800, x: 0, y: 0 };
+    },
     hasAttribute: k => attrs.has(k),
     setAttribute: (k, v) => { attrs.set(k, v); },
     getAttribute: k => (attrs.has(k) ? attrs.get(k) : null),
@@ -816,25 +820,42 @@ check('page presentation paints its own opaque surface', () => {
   return 'page mode paints --dsw-alias-bg-layer-2';
 });
 
-check('the top inset matches host pages in fullscreen too', () => {
+check('the page box is not pushed down by a top budget', () => {
   /*
-   * --dsh-frame-overlay-top drops to 20px in fullscreen while
-   * --dsh-frame-top-clearance stays 48px, so the earlier formula gave roughly
-   * half the gap its neighbours had. The host's own pages use
-   * calc(content-inset + clearance); assert ours does the same in both states.
+   * Two earlier versions added the top budget to the page BOX, which left a strip
+   * of app visible above the page and pushed the title lower than a normal page's
+   * header. The box must span to the main area's top edge; the budget lives on the
+   * title row instead. Asserted on the source because the inset is computed from
+   * measured geometry, which a DOM shim cannot reproduce faithfully.
    */
-  const CONTENT_INSET = 28;
-  const clearance = 48;
-  for (const state of [{ chromeTop: 68 }, { chromeTop: 20 }]) {
-    const ours = CONTENT_INSET + clearance;
-    const hostPage = CONTENT_INSET + clearance;
-    if (ours !== hostPage) throw new Error('mismatch in ' + JSON.stringify(state));
-    if (ours <= state.chromeTop && ours !== 76) throw new Error('inset not computed from clearance');
+  const src = source;
+  if (!/set\("top",\s*frameRect\.top\)/.test(src)) {
+    throw new Error('page top is not set flush to the frame rect');
   }
-  /* And it must not collapse when the clearance variable is missing. */
-  const fallback = (v) => CONTENT_INSET + (Number.isFinite(v) && v > 0 ? v : 0);
-  if (fallback(NaN) !== 28) throw new Error('missing clearance gave ' + fallback(NaN));
-  return 'content inset + clearance = 76px in windowed and fullscreen';
+  if (/set\("top",\s*frameRect\.top\s*\+/.test(src)) {
+    throw new Error('page top still adds a budget');
+  }
+  return 'page top = frameRect.top (no added budget)';
+});
+
+check('the title row clears the chrome by exactly its height', () => {
+  /*
+   * --dsh-frame-top-clearance IS the macOS title-bar height (48px), so using it as
+   * the title row's top padding clears the traffic lights by their own height.
+   * The earlier `overlay-top` value halved in fullscreen; the later
+   * `28px + clearance` read as too much once the row's own padding was counted.
+   */
+  const { slotCss } = globalThis.__pluginCss;
+  const m = slotCss.match(/\[data-dcw-settings-page\]\s*\.dcw_titleRow\{[^}]*\}/);
+  if (m === null) throw new Error('no title-row rule for page mode');
+  const rule = m[0];
+  if (!/padding-top:max\(24px,\s*var\(--dsh-frame-top-clearance/.test(rule)) {
+    throw new Error('title row does not use the chrome height: ' + rule);
+  }
+  if (/padding-top:[^;]*\+/.test(rule)) {
+    throw new Error('title row adds an extra budget on top: ' + rule);
+  }
+  return 'title padding-top = chrome height (24px floor, no extra budget)';
 });
 
 console.log('\n' + (failures.length === 0 ? 'RESULT: ALL CHECKS PASSED' : 'RESULT: ' + failures.length + ' FAILURE(S)\n  - ' + failures.join('\n  - ')));
