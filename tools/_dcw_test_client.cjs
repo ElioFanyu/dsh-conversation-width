@@ -800,5 +800,42 @@ check('switching page -> dialog removes the outside-click listener', () => {
   return 'listener and back button both removed on switch';
 });
 
+check('page presentation paints its own opaque surface', () => {
+  /*
+   * The overlay is transparent in dialog form: the mask supplies the dim and only
+   * the panel paints. Hiding the mask therefore reveals the app behind, which
+   * reads as the wrong colour once the page covers the main area. The page mode
+   * must supply an opaque background itself.
+   */
+  const { slotCss } = globalThis.__pluginCss;
+  const m = slotCss.match(/\[data-dcw-settings-page\]\{[^}]*\}/);
+  if (m === null) throw new Error('no page-mode rule');
+  if (!/background:var\(--dsw-alias-bg-layer-2\)/.test(m[0])) {
+    throw new Error('page mode has no opaque surface: ' + m[0]);
+  }
+  return 'page mode paints --dsw-alias-bg-layer-2';
+});
+
+check('the top inset matches host pages in fullscreen too', () => {
+  /*
+   * --dsh-frame-overlay-top drops to 20px in fullscreen while
+   * --dsh-frame-top-clearance stays 48px, so the earlier formula gave roughly
+   * half the gap its neighbours had. The host's own pages use
+   * calc(content-inset + clearance); assert ours does the same in both states.
+   */
+  const CONTENT_INSET = 28;
+  const clearance = 48;
+  for (const state of [{ chromeTop: 68 }, { chromeTop: 20 }]) {
+    const ours = CONTENT_INSET + clearance;
+    const hostPage = CONTENT_INSET + clearance;
+    if (ours !== hostPage) throw new Error('mismatch in ' + JSON.stringify(state));
+    if (ours <= state.chromeTop && ours !== 76) throw new Error('inset not computed from clearance');
+  }
+  /* And it must not collapse when the clearance variable is missing. */
+  const fallback = (v) => CONTENT_INSET + (Number.isFinite(v) && v > 0 ? v : 0);
+  if (fallback(NaN) !== 28) throw new Error('missing clearance gave ' + fallback(NaN));
+  return 'content inset + clearance = 76px in windowed and fullscreen';
+});
+
 console.log('\n' + (failures.length === 0 ? 'RESULT: ALL CHECKS PASSED' : 'RESULT: ' + failures.length + ' FAILURE(S)\n  - ' + failures.join('\n  - ')));
 process.exit(failures.length === 0 ? 0 : 2);

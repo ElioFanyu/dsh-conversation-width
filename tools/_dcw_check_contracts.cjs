@@ -145,8 +145,11 @@ assertMatch('the Settings panel is still the dialog element', generalClient)(
  * If it is renamed, the page header slides under the title bar and the panel's
  * buttons stop being clickable - a failure that only shows up visually.
  */
-assertMatch('the window-chrome top budget variable exists', read('dsh-client-ui-layout', 'lib/client.js'))(
-  new RegExp(`--dsh-frame-overlay-top`));
+assertMatch('the frame top-clearance variable exists', read('dsh-client-ui-layout', 'lib/client.js'))(
+  new RegExp(`--dsh-frame-top-clearance`));
+assertMatch('the clearance stays fixed in fullscreen (not lowered like overlay-top)',
+  read('dsh-client-ui-layout', 'lib/client.js'))(
+  new RegExp(`--dsh-frame-top-clearance\\s*:\\s*48px`));
 
 say('== the clamp the row mirrors ==');
 const conv = convClient || '';
