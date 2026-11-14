@@ -840,73 +840,47 @@ check('the page box is not pushed down by a top budget', () => {
   return 'page top = frameRect.top (no added budget)';
 });
 
-check('the title row clears the chrome by exactly its height', () => {
+check('the outer gap is inset, the title row keeps its own padding', () => {
   /*
-   * --dsh-frame-top-clearance IS the macOS title-bar height (48px), so using it as
-   * the title row's top padding clears the traffic lights by their own height.
-   * The earlier `overlay-top` value halved in fullscreen; the later
-   * `28px + clearance` read as too much once the row's own padding was counted.
+   * Space around the page is margin-like and is owned by `inset` on the overlay.
+   * Putting the chrome budget on the title row instead grew the page's interior
+   * while the box still reached the window edge, which is not what a neighbouring
+   * page looks like.
    */
   const { slotCss } = globalThis.__pluginCss;
-  const m = slotCss.match(/\[data-dcw-settings-page\]\s*\.dcw_titleRow\{[^}]*\}/);
-  if (m === null) throw new Error('no title-row rule for page mode');
-  const rule = m[0];
-  if (!/padding-top:max\(24px,\s*var\(--dsh-frame-top-clearance/.test(rule)) {
-    throw new Error('title row does not use the chrome height: ' + rule);
+  const insetRule = slotCss.match(/\[data-dcw-settings-page\]\{position:fixed!important;inset:[^}]*\}/);
+  if (insetRule === null) throw new Error('overlay inset rule missing');
+  if (!/var\(--dcw-page-top/.test(insetRule[0])) throw new Error('top gap is not driven by the inset variables');
+
+  const rowRule = (slotCss.match(/\[data-dcw-settings-page\] \.dcw_titleRow\{[^}]*\}/) || [null])[0];
+  if (rowRule === null) throw new Error('title-row rule missing');
+  if (/padding-top/.test(rowRule)) {
+    throw new Error('title row still carries the outer gap as padding: ' + rowRule);
   }
-  if (/padding-top:[^;]*\+/.test(rule)) {
-    throw new Error('title row adds an extra budget on top: ' + rule);
-  }
-  return 'title padding-top = chrome height (24px floor, no extra budget)';
+  if (!/padding-left:52px/.test(rowRule)) throw new Error('title row lost the back-button allowance');
+  return 'gap from inset; title row keeps the host padding plus button allowance';
 });
 
-check('no helper is defined twice (a later copy silently wins)', () => {
+check('the page marker is never mirrored onto the panel', () => {
   /*
-   * Twice now a duplicate definition shadowed the fixed version: the later copy
-   * wins silently, so a "fix" appeared to do nothing. Assert single definitions.
+   * The panel is position:relative, where `inset` is a RELATIVE OFFSET rather than
+   * a positioning frame. Mirroring the marker onto both elements shifted the whole
+   * Settings page right by the sidebar width and exposed the app behind it. That
+   * regression shipped in 1.2.6 and was visible as a large gap on the left.
    */
-  const names = ['findTitleRow', 'findHostCloseButton', 'closeSettings',
-                 'publishPageInset', 'installPageCloseAffordances', 'appFrame'];
-  const dupes = names.filter(n => (source.match(new RegExp('function ' + n + '\\(', 'g')) || []).length !== 1);
-  if (dupes.length) throw new Error('defined more than once: ' + dupes.join(', '));
-  return names.length + ' helpers, each defined once';
-});
-
-check('the title row is found by aria-labelledby, not by its text', () => {
-  /*
-   * The row's content comes from the settings.header slot, so it can be EMPTY when
-   * this runs. Requiring text made the lookup fail, the button then floated over
-   * the panel with no padding reserved, and it covered the window controls.
-   */
+  if (/dialog\.setAttribute\("data-dcw-settings-page"/.test(source)) {
+    throw new Error('marker is mirrored onto the dialog again');
+  }
   const { overlay, dialog } = mountDialogWithOverlay();
   const { fake } = freshCtx();
   store.clear();
   store.set(MODE_KEY, 'page');
-
-  /* Model the real shape: the dialog names its title row, whose body is empty. */
-  dialog._attrs.set('aria-labelledby', 'tid');
-  const row = globalThis.__hostNodes.makeHostNode();
-  row._attrs.set('id', 'tid');
-  documentShim._byId.set('tid', row);
-  row.textContent = '';
-  dialog._children.unshift(row);
-  dialog.querySelector = sel => (sel === '#tid' ? row : null);
-
   mod.apply(fake);
-  if (!row.classList.contains('dcw_titleRow')) {
-    throw new Error('title row not recognised when its text is empty');
+  if (!overlay.hasAttribute('data-dcw-settings-page')) throw new Error('overlay not marked');
+  if (dialog.hasAttribute('data-dcw-settings-page')) {
+    throw new Error('dialog was marked too - inset would shift it');
   }
-  if (overlay.hasAttribute('data-dcw-no-title')) throw new Error('fallback marker set despite finding the row');
-  return 'empty title row still recognised via aria-labelledby';
-});
-
-check('an unidentified title row still clears the chrome', () => {
-  /* With no nameable row the button must not sit over the window controls. */
-  const { slotCss } = globalThis.__pluginCss;
-  if (!/\[data-dcw-no-title\][^{]*\{[^}]*padding-top:max\(24px,\s*var\(--dsh-frame-top-clearance/.test(slotCss)) {
-    throw new Error('no fallback clearance rule');
-  }
-  return 'fallback moves the clearance onto the panel';
+  return 'marker on the overlay only';
 });
 
 console.log('\n' + (failures.length === 0 ? 'RESULT: ALL CHECKS PASSED' : 'RESULT: ' + failures.length + ' FAILURE(S)\n  - ' + failures.join('\n  - ')));
