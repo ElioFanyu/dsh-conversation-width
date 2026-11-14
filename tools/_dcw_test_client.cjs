@@ -822,22 +822,24 @@ check('page presentation paints its own opaque surface', () => {
   return 'page mode paints --dsw-alias-bg-layer-2';
 });
 
-check('the page box is not pushed down by a top budget', () => {
+check('the page gets its top gap from the chrome height', () => {
   /*
-   * Two earlier versions added the top budget to the page BOX, which left a strip
-   * of app visible above the page and pushed the title lower than a normal page's
-   * header. The box must span to the main area's top edge; the budget lives on the
-   * title row instead. Asserted on the source because the inset is computed from
-   * measured geometry, which a DOM shim cannot reproduce faithfully.
+   * On macOS the frame starts at y=0 with the title bar drawn over it, so
+   * frameRect.top is zero and the page slid under the window controls. The gap is
+   * an OUTER margin (via inset) equal to the chrome height; an earlier version put
+   * it on the title row as padding, and a later one dropped it entirely.
    */
-  const src = source;
-  if (!/set\("top",\s*frameRect\.top\)/.test(src)) {
-    throw new Error('page top is not set flush to the frame rect');
+  if (!/set\("top",\s*frameRect\.top\s*\+\s*chromeTop\)/.test(source)) {
+    throw new Error('page top does not add the chrome clearance');
   }
-  if (/set\("top",\s*frameRect\.top\s*\+/.test(src)) {
-    throw new Error('page top still adds a budget');
+  if (!/--dsh-frame-top-clearance/.test(source)) {
+    throw new Error('clearance variable is not read');
   }
-  return 'page top = frameRect.top (no added budget)';
+  /* The floor must not be zero, or a missing variable drops back to the old bug. */
+  const m = source.match(/chromeTop\s*=\s*Number\.isFinite\(clearance\)\s*&&\s*clearance\s*>\s*0\s*\?\s*clearance\s*:\s*(\d+)/);
+  if (m === null) throw new Error('no usable fallback for the clearance');
+  if (Number(m[1]) <= 0) throw new Error('fallback collapsed to zero');
+  return 'top = frameRect.top + clearance (floor ' + m[1] + 'px)';
 });
 
 check('the outer gap is inset, the title row keeps its own padding', () => {
